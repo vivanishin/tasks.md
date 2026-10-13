@@ -7,6 +7,7 @@ const cors = require("@koa/cors");
 const multer = require("@koa/multer");
 const mount = require("koa-mount");
 const serve = require("koa-static");
+const osl = require("./osl");
 
 const router = new Router();
 
@@ -20,10 +21,42 @@ const CONFIG_DIR = process.env.CONFIG_DIR || 'config';
 const TASKS_DIR = process.env.TASKS_DIR || 'tasks';
 const TITLE = process.env.TITLE || '';
 const PORT = process.env.PORT || 8080;
+const OSL_READ_ONLY = process.env.OSL_READ_ONLY === "true";
+const HOST = process.env.HOST || (OSL_READ_ONLY ? "127.0.0.1" : "0.0.0.0");
 
 const multerInstance = multer();
 
 const app = new Koa();
+
+if (OSL_READ_ONLY) {
+  app.use(async (ctx, next) => {
+    ctx.set("Cache-Control", "no-store");
+    ctx.set("X-Content-Type-Options", "nosniff");
+    if (!["GET", "HEAD"].includes(ctx.method)) {
+      ctx.set("Allow", "GET, HEAD");
+      ctx.status = 405;
+      ctx.body = { error: "OSL Web access is read-only" };
+      return;
+    }
+    const apiPath = `${BASE_PATH}/_api`;
+    if (ctx.path === apiPath || ctx.path.startsWith(`${apiPath}/`)) {
+      if (ctx.path === `${apiPath}/osl`) {
+        try { ctx.body = { ...osl.snapshot(TASKS_DIR), title: TITLE || "OSL" }; }
+        catch (error) {
+          console.error(`OSL read failed (${error.code || error.name})`);
+          ctx.status = 503;
+          ctx.body = { error: "Cannot read task data; check the server filesystem" };
+        }
+      } else {
+        ctx.status = 404;
+        ctx.body = { error: "Unsupported OSL endpoint" };
+      }
+      return;
+    }
+    await next();
+  });
+  app.use(mount(BASE_PATH || "/", serve("static")));
+}
 
 async function getTags(ctx) {
   const subPath = decodeURIComponent(ctx.request.url.substring("/tags".length));
@@ -264,7 +297,7 @@ app.use(mount((`${BASE_PATH || '/'}`), (ctx, next) => {
   if (/stylesheets\/(.*).css$/.test(ctx.request.url)) {
     const fileName = ctx.request.url.split('/stylesheets').at(-1);
     ctx.request.url = fileName;
-    middleware = serve(`${CONFIG_DIR}/stylesheets`)
+    middleware = serve(OSL_READ_ONLY ? 'static/stylesheets' : `${CONFIG_DIR}/stylesheets`)
   }
   else if (ctx.request.url.endsWith('apple-touch-icon.png')) {
     ctx.request.url = `/favicon/apple-touch-icon.png`
@@ -328,7 +361,7 @@ const localImagesCleanupInterval = /^\d{1,}$/.test(process.env.LOCAL_IMAGES_CLEA
   ? Number(process.env.LOCAL_IMAGES_CLEANUP_INTERVAL)
   : 1440
 
-if (localImagesCleanupInterval) {
+if (!OSL_READ_ONLY && localImagesCleanupInterval) {
   const intervalInMs = localImagesCleanupInterval * 60000;
   try {
     if (intervalInMs > 0) {
@@ -340,8 +373,9 @@ if (localImagesCleanupInterval) {
 }
 
 console.log('API starting at ' + PORT)
-fs.promises.mkdir(CONFIG_DIR, { recursive: true });
-if (PUID && PGID) {
+if (!OSL_READ_ONLY) fs.promises.mkdir(CONFIG_DIR, { recursive: true });
+if (!OSL_READ_ONLY && PUID && PGID) {
   fs.promises.chown(CONFIG_DIR, PUID, PGID);
 }
-app.listen(PORT);
+if (require.main === module) app.listen(PORT, HOST);
+module.exports = app;

@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [
     solidPlugin(),
     generalAssets(),
-    VitePWA({
+    process.env.VITE_OSL_READ_ONLY !== "true" && VitePWA({
       registerType: "autoUpdate",
       workbox: {
         clientsClaim: true,

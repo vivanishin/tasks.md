@@ -1,0 +1,7 @@
+.git
+.runtime
+**/node_modules
+frontend/dist
+backend/static
+backend/tasks
+backend/config

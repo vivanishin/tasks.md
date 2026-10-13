@@ -1,4 +1,4 @@
-import { createMemo } from "solid-js";
+import { createMemo, For } from "solid-js";
 import { handleKeyDown } from "../utils";
 
 /**
@@ -23,14 +23,12 @@ export function Card(props) {
     if (!props.dueDate) {
       return '';
     }
-    const [year, month, day] = props.dueDate.split('-')
-    const dueDateLocalTime = new Date(year, month - 1, day);
-    const dueDateLocalTimeISO = dueDateLocalTime.toISOString().split('T')[0];
-    const todayISO = new Date().toISOString().split('T')[0];
-    if (dueDateLocalTimeISO === todayISO) {
+    const now = new Date();
+    const todayISO = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-');
+    if (props.dueDate === todayISO) {
       return 'card__due-date--in-time';
     }
-    if (dueDateLocalTimeISO < todayISO) {
+    if (props.dueDate < todayISO) {
       return 'card__due-date--past-time';
     }
     return '';
