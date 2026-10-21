@@ -162,6 +162,7 @@ function snapshot(root) {
     && tasks.every((task) => task.id && ids.get(task.id).length === 1)
     && !issues.some((issue) => /^(Cannot read|Symbolic links)/.test(issue.message));
   return { schemaVersion: 1, states: config?.columns || [], spaces: config?.spaces || [],
+    defaultSpace: config?.defaultSpace || null,
     archiveState: config?.archiveColumn || null, nextId, allocationSafe, tasks, issues };
 }
 

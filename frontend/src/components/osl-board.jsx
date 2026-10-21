@@ -13,6 +13,7 @@ export default function OslBoard() {
   const [busy, setBusy] = createSignal(false);
   const [search, setSearch] = createSignal("");
   const [space, setSpace] = createSignal("");
+  const [defaultSpaceInitialized, setDefaultSpaceInitialized] = createSignal(false);
   const [tag, setTag] = createSignal("");
   const [archive, setArchive] = createSignal(false);
   const [showAllTags, setShowAllTags] = createSignal(false);
@@ -54,6 +55,12 @@ export default function OslBoard() {
       const result = await response.json();
       if (result.schemaVersion !== 1 || !Array.isArray(result.tasks)) throw new Error("Неподдерживаемый формат ответа");
       setData(result);
+      if (!defaultSpaceInitialized()) {
+        const defaultSpace = Array.isArray(result.spaces) && result.spaces.includes(result.defaultSpace)
+          ? result.defaultSpace : "";
+        setSpace(defaultSpace);
+        setDefaultSpaceInitialized(true);
+      }
       document.title = result.title;
       setError("");
       setRefreshed(new Date().toLocaleTimeString());
