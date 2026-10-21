@@ -3,7 +3,7 @@ import { Portal } from "solid-js/web";
 import { Card } from "./card";
 import { api } from "../api";
 import { useI18n } from "../i18n";
-import { renderMarkdown, visibleTags } from "../osl-content.mjs";
+import { renderMarkdown, visibleTags, markdownLink, taskFilePath } from "../osl-content.mjs";
 import "../stylesheets/index.css";
 import "../stylesheets/osl.css";
 
@@ -24,6 +24,7 @@ export default function OslBoard() {
   const spaces = createMemo(() => [...new Set([...(data().spaces || []), ...tasks().map((task) => task.space).filter(Boolean)])]);
   const tags = createMemo(() => visibleTags([...new Set(tasks().flatMap((task) => task.tags))], space(), showAllTags()).sort());
   const displayedTags = (task) => visibleTags(task.tags, space(), showAllTags());
+  const localTasksDirectory = import.meta.env.VITE_OSL_LOCAL_TASKS_DIR || "/mnt/co/notes/planning/osl/tasks";
   const exact = createMemo(() => /^osl:[1-9][0-9]*$/.test(search().trim()) ? search().trim().slice(4) : null);
   const visible = createMemo(() => tasks().filter((task) => {
     if (exact()) return task.id === exact();
@@ -152,7 +153,10 @@ export default function OslBoard() {
         <div class="osl-copy">
           <button type="button" onClick={() => copy(`osl:${task().id}`)}>Копировать osl:</button>
           <button type="button" onClick={() => copy(orgLink(task()))}>Копировать Org-ссылку</button>
+          <button type="button" onClick={() => copy(markdownLink(task()))}>Копировать md-ссылку</button>
+          <button type="button" onClick={() => copy(taskFilePath(localTasksDirectory, task()))}>Копировать путь к файлу</button>
           <button type="button" onClick={() => copy(`${window.location.href.split("#")[0]}#osl:${task().id}`)}>Копировать Web-ссылку</button>
+          <a class="osl-open-emacs" href={`org-protocol://osl?reference=${encodeURIComponent(`osl:${task().id}`)}`}>Открыть в Emacs</a>
         </div>
         <p role="status">{copyStatus()}</p>
         <div class="osl-body" innerHTML={renderMarkdown(task().body)} />

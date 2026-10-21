@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { renderMarkdown, visibleTags } from "./osl-content.mjs";
+import { renderMarkdown, visibleTags, markdownLink, taskFilePath } from "./osl-content.mjs";
 
 test("task bodies render Markdown, nested checklists and fenced code", () => {
   const html = renderMarkdown("## Heading\n\n- [ ] Open\n  - [x] Done\n\n```sh\necho '<ok>'\n```\n\n**bold** and `code`");
@@ -47,4 +47,10 @@ test("only the selected Space and provenance labels are hidden", () => {
   assert.deepEqual(visibleTags(tags, "digital", false), ["project::osl", "books"]);
   assert.deepEqual(visibleTags(tags, "", false), ["space::digital", "project::osl", "books"]);
   assert.deepEqual(visibleTags(tags, "digital", true), tags);
+});
+
+test("copied Markdown links preserve arbitrary titles and file paths", () => {
+  const task = { id: "280", title: "Task [label] \\ path", path: "4-in-progress/280-meta-osl-tasks.md" };
+  assert.match(renderMarkdown(markdownLink(task)), /href="#osl:280">Task \[label\] \\ path<\/a>/);
+  assert.equal(taskFilePath("/my tasks/", task), "/my tasks/4-in-progress/280-meta-osl-tasks.md");
 });

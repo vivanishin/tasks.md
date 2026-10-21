@@ -19,6 +19,7 @@ dialog.osl-detail { width: min(900px, 95vw); height: auto; max-height: 90dvh; bo
 .osl-detail h2 { margin: 0; font-size: 1.3rem; overflow-wrap: anywhere; }
 .osl-copy { display: flex; flex-wrap: wrap; gap: .5rem; }
 .osl-task-meta { overflow-wrap: anywhere; line-height: 1.5; }
+.osl-open-emacs { display: inline-flex; align-items: center; padding: 4px 15px; border-radius: 6px; background: var(--color-background-4); }
 .osl-body { overflow-wrap: anywhere; line-height: 1.6; padding: .75rem 0 1.5rem; }
 .osl-body :is(h1, h2, h3, h4, h5, h6) { margin: 1.2em 0 .5em; font-weight: 600; line-height: 1.3; }
 .osl-body :is(h1, h2) { font-size: 1.25rem; }
