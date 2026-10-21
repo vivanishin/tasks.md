@@ -32,3 +32,8 @@ markdown.renderer.rules.link_open = (tokens, index, options, env, renderer) => {
 export function renderMarkdown(body) {
   return markdown.render((body || "").replace(/^<!-- kaiten-transfer-id:[1-9][0-9]* source-sha256:[a-f0-9]{64} -->\r?\n?/gm, ""));
 }
+
+export function visibleTags(tags, space, showAll) {
+  return showAll ? tags : tags.filter((tag) => tag !== `space::${space}`
+    && tag !== "kaiten" && !tag.startsWith("source:"));
+}

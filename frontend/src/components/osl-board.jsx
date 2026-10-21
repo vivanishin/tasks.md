@@ -3,7 +3,7 @@ import { Portal } from "solid-js/web";
 import { Card } from "./card";
 import { api } from "../api";
 import { useI18n } from "../i18n";
-import { renderMarkdown } from "../osl-content.mjs";
+import { renderMarkdown, visibleTags } from "../osl-content.mjs";
 import "../stylesheets/index.css";
 import "../stylesheets/osl.css";
 
@@ -15,13 +15,15 @@ export default function OslBoard() {
   const [space, setSpace] = createSignal("");
   const [tag, setTag] = createSignal("");
   const [archive, setArchive] = createSignal(false);
+  const [showAllTags, setShowAllTags] = createSignal(false);
   const [reference, setReference] = createSignal("");
   const [copyStatus, setCopyStatus] = createSignal("");
   const [refreshed, setRefreshed] = createSignal("");
   const { t, locale } = useI18n();
   const tasks = () => data().tasks;
   const spaces = createMemo(() => [...new Set([...(data().spaces || []), ...tasks().map((task) => task.space).filter(Boolean)])]);
-  const tags = createMemo(() => [...new Set(tasks().flatMap((task) => task.tags))].sort());
+  const tags = createMemo(() => visibleTags([...new Set(tasks().flatMap((task) => task.tags))], space(), showAllTags()).sort());
+  const displayedTags = (task) => visibleTags(task.tags, space(), showAllTags());
   const exact = createMemo(() => /^osl:[1-9][0-9]*$/.test(search().trim()) ? search().trim().slice(4) : null);
   const visible = createMemo(() => tasks().filter((task) => {
     if (exact()) return task.id === exact();
@@ -96,13 +98,20 @@ export default function OslBoard() {
       <h1>{data().title || "OSL"}</h1>
       <span>Только чтение</span>
       <input aria-label="Поиск" placeholder="Поиск или osl:1234" value={search()} onInput={(event) => setSearch(event.target.value)} />
-      <select aria-label="Space" value={space()} onChange={(event) => setSpace(event.target.value)}>
+      <select aria-label="Space" value={space()} onChange={(event) => {
+        setSpace(event.target.value);
+        if (tag() && !tags().includes(tag())) setTag("");
+      }}>
         <option value="">Все Spaces</option><For each={spaces()}>{(value) => <option value={value}>{value}</option>}</For>
       </select>
       <select aria-label="Тег" value={tag()} onChange={(event) => setTag(event.target.value)}>
         <option value="">Все теги</option><For each={tags()}>{(value) => <option value={value}>{value}</option>}</For>
       </select>
       <label class="osl-checkbox"><input type="checkbox" checked={archive()} onChange={(event) => setArchive(event.target.checked)} />Архив</label>
+      <label class="osl-checkbox"><input type="checkbox" checked={showAllTags()} onChange={(event) => {
+        setShowAllTags(event.target.checked);
+        if (tag() && !tags().includes(tag())) setTag("");
+      }} />Все лейблы</label>
       <button type="button" onClick={refresh} disabled={busy()}>Обновить</button>
       <small aria-live="polite">{busy() ? "Обновление…" : refreshed() && `Обновлено ${refreshed()}`}</small>
     </header>
@@ -123,7 +132,7 @@ export default function OslBoard() {
           <For each={visible().filter((task) => task.state === state)}>{(task) => <Card
             name={task.path} disableDrag t={t} locale={locale()}
             content={task.body.slice(0, 160)} dueDate={task.due}
-            tags={task.tags.map((name) => ({ name, backgroundColor: tagColor(name) }))}
+            tags={displayedTags(task).map((name) => ({ name, backgroundColor: tagColor(name) }))}
             onClick={() => { if (task.id) window.location.hash = `osl:${task.id}`; else setError(`Нет корректного ID: ${task.path}`); }}
             headerSlot={<div><strong>{task.title}</strong><small class="osl-reference">{task.id ? `osl:${task.id}` : task.path}</small>
               <Show when={task.errors.length}><span class="osl-card-error">⚠ {task.errors.join("; ")}</span></Show></div>}
@@ -137,7 +146,7 @@ export default function OslBoard() {
         ref={(element) => queueMicrotask(() => { if (element.isConnected && !element.open) element.showModal(); })}
         onCancel={(event) => { event.preventDefault(); close(); }}>
         <header><h2>{task().title}</h2><button type="button" onClick={close}>Закрыть</button></header>
-        <p>{`osl:${task().id}`} · {task().state} · {task().tags.join(" · ")}</p>
+        <p class="osl-task-meta">{[`osl:${task().id}`, task().state, ...displayedTags(task())].join(" · ")}</p>
         <Show when={task().due}><p>Срок / пересмотр: {task().due}</p></Show>
         <Show when={task().errors.length}><p class="osl-alert">{task().errors.join("; ")}</p></Show>
         <div class="osl-copy">

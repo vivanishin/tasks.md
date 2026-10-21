@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { renderMarkdown } from "./osl-content.mjs";
+import { renderMarkdown, visibleTags } from "./osl-content.mjs";
 
 test("task bodies render Markdown, nested checklists and fenced code", () => {
   const html = renderMarkdown("## Heading\n\n- [ ] Open\n  - [x] Done\n\n```sh\necho '<ok>'\n```\n\n**bold** and `code`");
@@ -40,4 +40,11 @@ test("details fold Markdown and preserve code without enabling arbitrary HTML", 
   assert.match(unsafe, /<summary>&lt;img/);
   assert.match(renderMarkdown('```html\n<details>\n<summary>Literal</summary>\n</details>\n```'), /&lt;details&gt;/);
   assert.match(renderMarkdown('    <details>\n'), /<pre><code>&lt;details&gt;/);
+});
+
+test("only the selected Space and provenance labels are hidden", () => {
+  const tags = ["space::digital", "project::osl", "kaiten", "source::telegram", "source:kaiten", "books"];
+  assert.deepEqual(visibleTags(tags, "digital", false), ["project::osl", "books"]);
+  assert.deepEqual(visibleTags(tags, "", false), ["space::digital", "project::osl", "books"]);
+  assert.deepEqual(visibleTags(tags, "digital", true), tags);
 });
