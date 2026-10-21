@@ -27,3 +27,17 @@ test("source HTML and executable link targets cannot execute", () => {
   assert.doesNotMatch(html, /<script|<img|href="(?:javascript|data):/i);
   assert.match(html, /&lt;script&gt;/);
 });
+
+test("details fold Markdown and preserve code without enabling arbitrary HTML", () => {
+  const html = renderMarkdown('<details>\n<summary>Original exported record</summary>\n\n```json\n{"text":"</details><script>alert(1)</script>"}\n```\n\n</details>');
+  assert.match(html, /^<details>\n<summary>Original exported record<\/summary>\n<pre><code class="language-json">/);
+  assert.match(html, /&lt;\/details&gt;&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.match(html, /<\/code><\/pre>\n<\/details>\n$/);
+  assert.doesNotMatch(html, /<script>/);
+  const unsafe = renderMarkdown('<details ontoggle="alert(1)" open>\n<summary><img src=x onerror=alert(1)></summary>\n\nText\n\n</details>');
+  assert.doesNotMatch(unsafe, /<details[^>]+>|<img/);
+  assert.match(unsafe, /&lt;details ontoggle=/);
+  assert.match(unsafe, /<summary>&lt;img/);
+  assert.match(renderMarkdown('```html\n<details>\n<summary>Literal</summary>\n</details>\n```'), /&lt;details&gt;/);
+  assert.match(renderMarkdown('    <details>\n'), /<pre><code>&lt;details&gt;/);
+});
