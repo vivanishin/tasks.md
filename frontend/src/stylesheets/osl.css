@@ -13,7 +13,7 @@
 .osl-alert, .osl-validation { background: var(--color-background-2); border-left: 4px solid var(--color-alt-1); }
 .osl-validation { max-height: 180px; overflow: auto; flex-shrink: 0; font-size: .85rem; line-height: 1.5; }
 .osl-validation ul { padding: .5rem 0; }
-dialog.osl-detail { width: min(900px, 95vw); height: auto; max-height: 90dvh; box-sizing: border-box; padding: 1.5rem; overflow: auto; }
+dialog.osl-detail { width: min(900px, 95vw); height: auto; max-height: 90dvh; box-sizing: border-box; padding: 1.5rem; overflow: auto; color: var(--color-foreground); background: var(--color-background-2); }
 .osl-detail::backdrop { background: rgb(0 0 0 / .55); }
 .osl-detail header { display: flex; gap: 1rem; justify-content: space-between; align-items: start; }
 .osl-detail h2 { margin: 0; font-size: 1.3rem; overflow-wrap: anywhere; }
