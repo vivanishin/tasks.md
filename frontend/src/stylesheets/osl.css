@@ -18,7 +18,24 @@ dialog.osl-detail { width: min(900px, 95vw); height: auto; max-height: 90dvh; bo
 .osl-detail header { display: flex; gap: 1rem; justify-content: space-between; align-items: start; }
 .osl-detail h2 { margin: 0; font-size: 1.3rem; overflow-wrap: anywhere; }
 .osl-copy { display: flex; flex-wrap: wrap; gap: .5rem; }
-.osl-body { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; padding: .75rem 0 1.5rem; }
+.osl-body { overflow-wrap: anywhere; line-height: 1.6; padding: .75rem 0 1.5rem; }
+.osl-body :is(h1, h2, h3, h4, h5, h6) { margin: 1.2em 0 .5em; font-weight: 600; line-height: 1.3; }
+.osl-body :is(h1, h2) { font-size: 1.25rem; }
+.osl-body :is(h3, h4, h5, h6) { font-size: 1.05rem; }
+.osl-body :is(p, ul, ol, pre, blockquote, table) { margin: .75em 0; }
+.osl-body :is(ul, ol) { padding-left: 1.5rem; }
+.osl-body ul { list-style-type: disc; }
+.osl-body ol { list-style-type: decimal; }
+.osl-body li > :is(ul, ol) { margin: .25em 0; }
+.osl-body .task-list-item { list-style-type: none; }
+.osl-body .task-list-item-checkbox { width: auto; height: auto; margin: 0 .4em 0 -1.4em; padding: 0; }
+.osl-body code { font-size: .9em; background: var(--color-background-1); border-radius: 3px; padding: .1em .3em; }
+.osl-body pre { background: var(--color-background-1); padding: 1rem; border-radius: 6px; overflow-x: auto; white-space: pre; }
+.osl-body pre code { padding: 0; background: none; }
+.osl-body blockquote { border-left: 3px solid var(--color-background-4); padding-left: 1rem; }
+.osl-body table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+.osl-body :is(th, td) { border: 1px solid var(--color-background-4); padding: .4em .6em; }
+.osl-body img { max-width: 100%; height: auto; }
 .osl-body a { color: var(--color-accent); }
 .osl-detail footer { opacity: .7; font-size: .8rem; overflow-wrap: anywhere; }
 @media (max-width: 600px) {

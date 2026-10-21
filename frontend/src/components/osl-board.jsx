@@ -3,28 +3,9 @@ import { Portal } from "solid-js/web";
 import { Card } from "./card";
 import { api } from "../api";
 import { useI18n } from "../i18n";
+import { renderMarkdown } from "../osl-content.mjs";
 import "../stylesheets/index.css";
 import "../stylesheets/osl.css";
-
-function LinkedText(props) {
-  const parts = createMemo(() => {
-    const text = props.text || "";
-    const pattern = /\[([^\]\n]+)\]\((osl:[1-9][0-9]*|https?:\/\/[^\s)]+)\)|\bosl:([1-9][0-9]*)\b|https?:\/\/[^\s<>]+/g;
-    const result = [];
-    let cursor = 0;
-    for (const match of text.matchAll(pattern)) {
-      result.push({ text: text.slice(cursor, match.index) });
-      const target = match[2] || (match[3] ? `osl:${match[3]}` : match[0]);
-      result.push({ text: match[1] || target, href: target.startsWith("osl:") ? `#${target}` : target });
-      cursor = match.index + match[0].length;
-    }
-    result.push({ text: text.slice(cursor) });
-    return result;
-  });
-  return <For each={parts()}>{(part) => part.href
-    ? <a href={part.href} rel="noreferrer">{part.text}</a>
-    : part.text}</For>;
-}
 
 export default function OslBoard() {
   const [data, setData] = createSignal({ tasks: [], states: [], spaces: [], archiveState: null, issues: [] });
@@ -165,7 +146,7 @@ export default function OslBoard() {
           <button type="button" onClick={() => copy(`${window.location.href.split("#")[0]}#osl:${task().id}`)}>Копировать Web-ссылку</button>
         </div>
         <p role="status">{copyStatus()}</p>
-        <div class="osl-body"><LinkedText text={task().body} /></div>
+        <div class="osl-body" innerHTML={renderMarkdown(task().body)} />
         <footer><small>{task().path}</small></footer>
       </dialog></Portal>;
     }}</Show>
