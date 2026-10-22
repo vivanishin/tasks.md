@@ -167,8 +167,9 @@ function snapshot(root) {
 }
 
 function lookup(root, reference) {
-  if (!/^osl:[1-9][0-9]*$/.test(reference)) throw new Error("Expected an exact reference such as osl:1234");
-  const matches = snapshot(root).tasks.filter((task) => task.id === reference.slice(4));
+  const match = /^(?:osl:)?([1-9][0-9]*)$/.exec(reference);
+  if (!match) throw new Error("Expected a positive OSL number or reference such as 1234 or osl:1234");
+  const matches = snapshot(root).tasks.filter((task) => task.id === match[1]);
   if (matches.length !== 1) throw new Error(matches.length ? `Ambiguous reference ${reference}` : `Unknown reference ${reference}`);
   return path.join(root, matches[0].path);
 }
@@ -246,7 +247,7 @@ function main(args) {
     }
     return process.stdout.write(`${JSON.stringify(capture(root, options))}\n`);
   }
-  throw new Error("Usage: osl.js --root DIR init|config|validate|snapshot|lookup osl:N|capture --title TITLE [--space SPACE] [--tag TAG] [--state STATE] [--body TEXT]");
+  throw new Error("Usage: osl.js --root DIR init|config|validate|snapshot|lookup NUMBER_OR_REFERENCE|capture --title TITLE [--space SPACE] [--tag TAG] [--state STATE] [--body TEXT]");
 }
 
 module.exports = { readConfig, parseTask, snapshot, lookup, init, capture };

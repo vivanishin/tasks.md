@@ -31,12 +31,15 @@ test("identity survives rename, lane move, Space change and archive; allocator n
   fs.renameSync(first.path, moved);
   fs.writeFileSync(moved, fs.readFileSync(moved, "utf8").replace("space::home", "space::work").replace("# Первая задача", "# Новое название"));
   assert.equal(osl.lookup(root, first.reference), moved);
+  assert.equal(osl.lookup(root, first.id), moved);
   assert.equal(osl.snapshot(root).issues.length, 0);
   assert.equal(osl.snapshot(root).tasks.find((task) => task.id === first.id).space, "work");
   fs.unlinkSync(second.path);
   assert.equal(osl.capture(root, { title: "Next" }).id, "3");
-  assert.throws(() => osl.lookup(root, "osl:01"), /exact reference/);
-  assert.throws(() => osl.lookup(root, "1"), /exact reference/);
+  for (const reference of ["", "0", "01", "osl:01", "-1", "1x", " 1", "osl:1/2"]) {
+    assert.throws(() => osl.lookup(root, reference), /positive OSL number or reference/);
+  }
+  assert.throws(() => osl.lookup(root, "999"), /Unknown/);
   assert.throws(() => osl.lookup(root, "osl:999"), /Unknown/);
 });
 
@@ -72,6 +75,7 @@ test("duplicate IDs are visible and cannot be resolved arbitrarily", (t) => {
   assert.equal(view.tasks.length, 2);
   assert.equal(view.tasks.filter((item) => item.errors.some((message) => message.includes("Duplicate"))).length, 2);
   assert.throws(() => osl.lookup(root, task.reference), /Ambiguous/);
+  assert.throws(() => osl.lookup(root, task.id), /Ambiguous/);
   assert.throws(() => osl.capture(root, { title: "Unsafe" }), /invalid/);
 });
 

@@ -26,7 +26,7 @@ export default function OslBoard() {
   const tags = createMemo(() => visibleTags([...new Set(tasks().flatMap((task) => task.tags))], space(), showAllTags()).sort());
   const displayedTags = (task) => visibleTags(task.tags, space(), showAllTags());
   const localTasksDirectory = import.meta.env.VITE_OSL_LOCAL_TASKS_DIR || "/mnt/co/notes/planning/osl/tasks";
-  const exact = createMemo(() => /^osl:[1-9][0-9]*$/.test(search().trim()) ? search().trim().slice(4) : null);
+  const exact = createMemo(() => /^(?:osl:)?([1-9][0-9]*)$/.exec(search().trim())?.[1] || null);
   const visible = createMemo(() => tasks().filter((task) => {
     if (exact()) return task.id === exact();
     if (task.state === data().archiveState && !archive()) return false;
@@ -105,7 +105,7 @@ export default function OslBoard() {
     <header class="app-header osl-header">
       <h1>{data().title || "OSL"}</h1>
       <span>Только чтение</span>
-      <input aria-label="Поиск" placeholder="Поиск или osl:1234" value={search()} onInput={(event) => setSearch(event.target.value)} />
+      <input aria-label="Поиск" placeholder="Поиск, номер или osl:1234" value={search()} onInput={(event) => setSearch(event.target.value)} />
       <select aria-label="Space" value={space()} onChange={(event) => {
         setSpace(event.target.value);
         if (tag() && !tags().includes(tag())) setTag("");
