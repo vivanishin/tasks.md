@@ -112,8 +112,8 @@ export default function OslBoard() {
       }}>
         <option value="">Все Spaces</option><For each={spaces()}>{(value) => <option value={value}>{value}</option>}</For>
       </select>
-      <select aria-label="Тег" value={tag()} onChange={(event) => setTag(event.target.value)}>
-        <option value="">Все теги</option><For each={tags()}>{(value) => <option value={value}>{value}</option>}</For>
+      <select aria-label="Лейбл" value={tag()} onChange={(event) => setTag(event.target.value)}>
+        <option value="">Все лейблы</option><For each={tags()}>{(value) => <option value={value}>{value}</option>}</For>
       </select>
       <label class="osl-checkbox"><input type="checkbox" checked={archive()} onChange={(event) => setArchive(event.target.checked)} />Архив</label>
       <label class="osl-checkbox"><input type="checkbox" checked={showAllTags()} onChange={(event) => {
