@@ -1,9 +1,8 @@
-# OSL read-only increment
+# OSL increment
 
 Implements the initial Markdown phase of ADR-001 in
 `/mnt/co/notes/planning/osl/adr-001-tasks-md.org`. The full OSL specification is
-still a draft. Org conversion, Web state changes and comments remain later
-increments.
+still a draft. Org conversion and comments remain later increments.
 
 Use `/mnt/co/notes/planning/osl/README.org` for the schema, Emacs setup,
 scoped commits, refresh and deployment procedures. Application source stays here;
@@ -11,9 +10,22 @@ canonical tasks stay in `/mnt/co/notes/planning/osl/tasks`, in the notes Git
 repository.
 
 The OSL frontend is selected at build time with `VITE_OSL_READ_ONLY=true`.
-The backend must start with `OSL_READ_ONLY=true`; it rejects every method
-except GET and HEAD before parsing bodies or running upload handlers. Only
-`/_api/osl` is available in this mode. Every read scans the canonical files,
+The backend starts with `OSL_READ_ONLY=true`. This restricted mode also permits
+the upstream `PATCH /_api/resource/COLUMN/FILE.md` endpoint with only `newPath`
+to move a task between configured columns while retaining its filename.
+`OSL_HELPER` selects the notes helper; it runs `move osl:ID --to COLUMN`
+without a shell. Success means the local commit completed. A separate Push
+button calls `POST /_api/osl/push` with `{}` to run `osl.sh push`, publishing
+existing commits without staging or committing pending edits.
+`GET /_api/osl` includes `git.unpushed`, the outgoing commit count against the
+locally tracked upstream, without a fetch. The indicator includes commits made
+outside the Web app. Failure to determine status returns `unpushed: null`
+and an error; it does not hide the task snapshot. Failed push retains local
+commits and the indicator. Errors remain visible across refreshes.
+The Web board reuses upstream drag-and-drop for mouse and long-press moves.
+It refreshes actual files and Git status after each attempt. Dropping within
+the same column preserves the current order.
+Every read scans the canonical files,
 including archive, with the same parser as the capture/validation CLI. Invalid
 cards remain visible, and duplicate IDs cannot be resolved arbitrarily.
 Column order/names, Spaces, capture defaults and the common archive come from
@@ -21,8 +33,8 @@ Column order/names, Spaces, capture defaults and the common archive come from
 creation/modification timestamps. Emacs Lisp lives in `~/.emacs.d/lisp/osl.el`
 and delegates storage operations to `osl.sh`, whose `config` command returns
 the same validated board configuration.
-Image cleanup, config creation, filesystem mutation routes and PWA caching
-are disabled. The default OSL listener is loopback. Upstream writable mode
+Image cleanup, config creation, other write operations and PWA caching
+remain disabled. The default OSL listener is loopback. Upstream writable mode
 remains available for upstream use; do not use it to serve OSL data.
 
 Tests (Node.js 22):

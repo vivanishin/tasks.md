@@ -236,6 +236,9 @@ function Container(props) {
   function handlePointerUp() {
     setTargetBeforeMoving(null);
     setStartPageCoordinates(null);
+    if (dragAndDropTarget().originalElement && dragAndDropTarget().to === null) {
+      setDragAndDropTarget((prev) => ({ ...prev, to: prev.from }));
+    }
     if (
       !dragAndDropTarget().originalElement ||
       !sortedItemsIds ||

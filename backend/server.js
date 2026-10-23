@@ -8,6 +8,9 @@ const multer = require("@koa/multer");
 const mount = require("koa-mount");
 const serve = require("koa-static");
 const osl = require("./osl");
+const { execFile } = require("node:child_process");
+const { promisify } = require("node:util");
+const runFile = promisify(execFile);
 
 const router = new Router();
 
@@ -28,10 +31,38 @@ const multerInstance = multer();
 
 const app = new Koa();
 
+async function runHelper(args) {
+  if (!process.env.OSL_HELPER) throw new Error("Configure OSL_HELPER for Git operations");
+  return runFile(process.env.OSL_HELPER, args, {
+    env: { ...process.env, OSL_TASKS: TASKS_DIR, OSL_APP: `${__dirname}/..`,
+      OSL_NODE: process.execPath, GIT_TERMINAL_PROMPT: "0" },
+  });
+}
+
+async function gitStatus() {
+  try { return JSON.parse((await runHelper(["git-status"])).stdout); }
+  catch (error) { return { unpushed: null, error: error.stderr?.trim() || error.message }; }
+}
+
+async function completeMutation(ctx, args) {
+  try {
+    await runHelper(args);
+    ctx.status = 204;
+  } catch (error) {
+    ctx.status = typeof error.code === "number" ? 409 : 503;
+    ctx.body = { error: error.stderr?.trim() || error.message };
+  }
+}
+
 if (OSL_READ_ONLY) {
   app.use(async (ctx, next) => {
     ctx.set("Cache-Control", "no-store");
     ctx.set("X-Content-Type-Options", "nosniff");
+    if ((ctx.method === "PATCH" && ctx.path.startsWith(`${BASE_PATH}/_api/resource/`))
+        || (ctx.method === "POST" && ctx.path === `${BASE_PATH}/_api/osl/push`)) {
+      await next();
+      return;
+    }
     if (!["GET", "HEAD"].includes(ctx.method)) {
       ctx.set("Allow", "GET, HEAD");
       ctx.status = 405;
@@ -41,7 +72,7 @@ if (OSL_READ_ONLY) {
     const apiPath = `${BASE_PATH}/_api`;
     if (ctx.path === apiPath || ctx.path.startsWith(`${apiPath}/`)) {
       if (ctx.path === `${apiPath}/osl`) {
-        try { ctx.body = { ...osl.snapshot(TASKS_DIR), title: TITLE || "OSL" }; }
+        try { ctx.body = { ...osl.snapshot(TASKS_DIR), title: TITLE || "OSL", git: await gitStatus() }; }
         catch (error) {
           console.error(`OSL read failed (${error.code || error.name})`);
           ctx.status = 503;
@@ -57,6 +88,17 @@ if (OSL_READ_ONLY) {
   });
   app.use(mount(BASE_PATH || "/", serve("static")));
 }
+
+router.post("/osl/push", async (ctx) => {
+  if (!OSL_READ_ONLY) { ctx.status = 404; return; }
+  const body = ctx.request.body;
+  if (!ctx.is("application/json") || !body || Array.isArray(body) || Object.keys(body).length) {
+    ctx.status = 400;
+    ctx.body = { error: "Expected an empty JSON object" };
+    return;
+  }
+  await completeMutation(ctx, ["push"]);
+});
 
 async function getTags(ctx) {
   const subPath = decodeURIComponent(ctx.request.url.substring("/tags".length));
@@ -174,6 +216,21 @@ router.post("/resource/:path*", createResource);
 
 async function updateResource(ctx) {
   const oldPath = decodeURIComponent(ctx.request.url.substring("/resources".length));
+  if (OSL_READ_ONLY) {
+    const body = ctx.request.body;
+    const current = osl.snapshot(TASKS_DIR);
+    const task = current.tasks.find((task) => task.path === oldPath);
+    const parts = typeof body?.newPath === "string" ? body.newPath.replace(/^\//, "").split("/") : [];
+    if (!ctx.is("application/json") || Object.keys(body || {}).some((key) => key !== "newPath")
+        || !task?.id || parts.length !== 2 || parts[1] !== oldPath.split("/").at(-1)
+        || !current.states.includes(parts[0])) {
+      ctx.status = 400;
+      ctx.body = { error: "OSL only supports moving an existing task between configured columns" };
+      return;
+    }
+    await completeMutation(ctx, ["move", `osl:${task.id}`, "--to", parts[0]]);
+    return;
+  }
   const newPath = decodeURIComponent(ctx.request.body.newPath || oldPath).replaceAll(
     /<>:"\/\\\|\?\*#/g,
     " "

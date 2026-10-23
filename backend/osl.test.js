@@ -142,7 +142,7 @@ test("regressed allocator, failed reservation and competing captures do not reus
   assert.equal(osl.snapshot(root).issues.length, 0);
 });
 
-test("read-only HTTP rejects all mutation routes and uploads without touching data or config", async (t) => {
+test("OSL HTTP rejects content edits and uploads without touching data or config", async (t) => {
   const root = fixture(t);
   const task = osl.capture(root, { title: "HTTP", state: "90-archive" });
   const config = path.join(root, ".absent-config");
@@ -159,6 +159,10 @@ test("read-only HTTP rejects all mutation routes and uploads without touching da
   for (const method of ["POST", "PATCH", "PUT", "DELETE", "OPTIONS"]) {
     for (const route of ["/osl/_api/resource/00-inbox/test.md", "/osl/_api/tags", "/osl/_api/sort", "/osl/_api/image", "/_api/resource", "/osl/anything"]) {
       const response = await fetch(`${base}${route}`, { method, body: "malformed request" });
+      if (method === "PATCH" && route === "/osl/_api/resource/00-inbox/test.md") {
+        assert.equal(response.status, 400);
+        continue;
+      }
       assert.equal(response.status, 405, `${method} ${route}`);
       assert.equal(response.headers.get("allow"), "GET, HEAD");
     }
@@ -166,7 +170,10 @@ test("read-only HTTP rejects all mutation routes and uploads without touching da
   const response = await fetch(`${base}/osl/_api/osl`);
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "no-store");
-  assert.equal((await response.json()).tasks[0].id, task.id);
+  const data = await response.json();
+  assert.equal(data.tasks[0].id, task.id);
+  assert.equal(data.git.unpushed, null);
+  assert.equal(typeof data.git.error, "string");
   assert.equal((await fetch(`${base}/osl/_api/resource/%2e%2e/%2e%2e/etc`)).status, 404);
   assert.equal((await fetch(`${base}/osl/_api/image/anything`)).status, 404);
   assert.equal((await fetch(`${base}/osl/_api/osl`, { method: "HEAD" })).status, 200);
@@ -211,4 +218,108 @@ test("scoped commit excludes unrelated staged files; a failed push retains the l
   assert.match(result.stderr, /retained.*pending synchronization/);
   assert.match(git("show", "HEAD:tasks/00-inbox/1.md"), /accepted local change/);
   assert.equal(git("diff", "--cached", "--name-only"), "unrelated.txt");
+});
+
+test("OSL moves commit locally; explicit push updates Git status and preserves failures", async (t) => {
+  const helper = process.env.OSL_HELPER;
+  if (!helper) return t.skip("Set OSL_HELPER to test Web moves");
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "osl-web-move "));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const git = (...args) => {
+    const result = spawnSync("git", ["-C", repo, ...args], { encoding: "utf8",
+      env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" } });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  git("init", "-q");
+  git("config", "user.name", "OSL test");
+  git("config", "user.email", "osl-test@example.invalid");
+  const root = path.join(repo, "tasks");
+  fs.mkdirSync(root);
+  initialize(root);
+  const task = osl.capture(root, { title: "HTTP move" });
+  const filename = "renamed task.md";
+  const source = `00-inbox/${filename}`;
+  const target = `10-next/${filename}`;
+  fs.renameSync(task.path, path.join(root, source));
+  const content = fs.readFileSync(path.join(root, source), "utf8");
+  fs.writeFileSync(path.join(repo, "unrelated.txt"), "original\n");
+  git("add", ".");
+  git("commit", "-qm", "Initial");
+  const initial = git("rev-parse", "HEAD");
+  const remote = path.join(repo, "remote.git");
+  git("init", "--bare", "-q", remote);
+  git("remote", "add", "origin", remote);
+  git("push", "-u", "origin", "HEAD");
+  fs.writeFileSync(path.join(repo, "unrelated.txt"), "staged edit\n");
+  git("add", "unrelated.txt");
+  const beforeIndex = git("diff", "--cached");
+
+  const settings = { OSL_READ_ONLY: "true", TASKS_DIR: root, BASE_PATH: "/osl",
+    CONFIG_DIR: path.join(repo, "absent-config"), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
+  const previous = Object.fromEntries(Object.keys(settings).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, settings);
+  delete require.cache[require.resolve("./server")];
+  const server = require("./server").listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    delete require.cache[require.resolve("./server")];
+  });
+  const base = `http://127.0.0.1:${server.address().port}/osl/_api`;
+  const patch = (from, body) => fetch(`${base}/resource/${from.split("/").map(encodeURIComponent).join("/")}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  const status = async () => (await (await fetch(`${base}/osl`)).json()).git;
+  const push = () => fetch(`${base}/osl/push`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+  });
+  assert.deepEqual(await status(), { unpushed: 0 });
+  for (const body of [{ content: "overwrite" }, { newPath: target, content: "overwrite" },
+    { newPath: "10-next/renamed.md" }, { newPath: `../${filename}` }, { newPath: `unknown/${filename}` }]) {
+    assert.equal((await patch(source, body)).status, 400);
+    assert.equal(git("rev-parse", "HEAD"), initial);
+    assert.equal(fs.readFileSync(path.join(root, source), "utf8"), content);
+  }
+  assert.equal((await patch(source, { newPath: `/${target}` })).status, 204);
+  assert.equal(fs.existsSync(path.join(root, source)), false);
+  assert.equal(fs.readFileSync(path.join(root, target), "utf8"), content);
+  assert.equal(git("--git-dir", remote, "rev-parse", "HEAD"), initial);
+  assert.deepEqual(await status(), { unpushed: 1 });
+  assert.equal(git("diff", "--cached"), beforeIndex);
+
+  fs.appendFileSync(path.join(root, target), "\nUncommitted edit\n");
+  let response = await patch(target, { newPath: source });
+  assert.equal(response.status, 409);
+  assert.match((await response.json()).error, /Commit task edits/);
+  fs.writeFileSync(path.join(root, target), content);
+
+  git("remote", "set-url", "origin", path.join(repo, "absent.git"));
+  response = await patch(target, { newPath: source });
+  assert.equal(response.status, 204);
+  assert.equal(git("show", `HEAD:tasks/${source}`), content.trimEnd());
+  const view = await (await fetch(`${base}/osl`)).json();
+  assert.equal(view.tasks[0].path, source);
+  assert.deepEqual(view.git, { unpushed: 2 });
+  const committed = git("rev-parse", "HEAD");
+  response = await fetch(`${base}/osl/push`, { method: "POST", body: "{}" });
+  assert.equal(response.status, 400);
+  response = await fetch(`${base}/osl/push`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ remote: "other" }),
+  });
+  assert.equal(response.status, 400);
+  response = await push();
+  assert.equal(response.status, 409);
+  assert.match((await response.json()).error, /retained.*pending synchronization/);
+  assert.deepEqual(await status(), { unpushed: 2 });
+  git("remote", "set-url", "origin", remote);
+  assert.equal((await push()).status, 204);
+  assert.equal(git("rev-parse", "HEAD"), committed);
+  assert.equal(committed, git("--git-dir", remote, "rev-parse", "HEAD"));
+  assert.deepEqual(await status(), { unpushed: 0 });
+  assert.equal(git("diff", "--cached"), beforeIndex);
 });

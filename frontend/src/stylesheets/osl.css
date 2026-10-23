@@ -1,5 +1,7 @@
 .osl-header h1 { font-size: 1.2rem; margin: 0; }
 .osl-header > span, .osl-header small { font-size: .8rem; }
+.osl-unpushed { display: inline-flex; align-items: center; gap: .4rem; }
+.osl-push-light { width: .55rem; height: .55rem; border-radius: 50%; background: #e5a000; box-shadow: 0 0 .35rem #e5a000; }
 .osl-header input[aria-label="Поиск"] { width: min(100%, 18rem); height: 32px; }
 .osl-checkbox { display: flex; align-items: center; gap: .5rem; font-size: .9rem; }
 .osl-checkbox input { height: auto; margin: 0; }
