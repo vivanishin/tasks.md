@@ -1,4 +1,4 @@
-import { createSignal, createMemo, onMount, onCleanup, For, Show } from "solid-js";
+import { createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { Card } from "./card";
 import { DragAndDrop } from "./drag-and-drop";
@@ -17,7 +17,8 @@ export default function OslBoard() {
   const [writeError, setWriteError] = createSignal("");
   const [search, setSearch] = createSignal("");
   const [space, setSpace] = createSignal("");
-  const [defaultSpaceInitialized, setDefaultSpaceInitialized] = createSignal(false);
+  const [spaceInitialized, setSpaceInitialized] = createSignal(false);
+  let spaceParameter;
   const [tag, setTag] = createSignal("");
   const [archive, setArchive] = createSignal(false);
   const [showAllTags, setShowAllTags] = createSignal(false);
@@ -28,12 +29,15 @@ export default function OslBoard() {
   const working = () => busy() || moving() || pushing();
   const tasks = () => data().tasks;
   const spaces = createMemo(() => [...new Set([...(data().spaces || []), ...tasks().map((task) => task.space).filter(Boolean)])]);
+  const spaceError = createMemo(() => spaceInitialized() && space() && !spaces().includes(space())
+    ? `Неизвестный Space «${space()}». Выберите пространство из списка.` : "");
   const tags = createMemo(() => visibleTags([...new Set(tasks().flatMap((task) => task.tags))], space(), showAllTags()).sort());
   const displayedTags = (task) => visibleTags(task.tags, space(), showAllTags());
   const localTasksDirectory = import.meta.env.VITE_OSL_LOCAL_TASKS_DIR || "/mnt/co/notes/planning/osl/tasks";
   const exact = createMemo(() => /^(?:osl:)?([1-9][0-9]*)$/.exec(search().trim())?.[1] || null);
   const visible = createMemo(() => tasks().filter((task) => {
     if (exact()) return task.id === exact();
+    if (spaceError()) return false;
     if (task.state === data().archiveState && !archive()) return false;
     if (space() && task.space && data().spaces.includes(task.space) && task.space !== space()) return false;
     if (tag() && !task.tags.includes(tag())) return false;
@@ -50,6 +54,30 @@ export default function OslBoard() {
     if (!selected().length) return `Задача ${reference()} не найдена`;
     return "";
   });
+  createEffect(() => { document.title = `${space() || "Все Spaces"} — ${data().title || "OSL"}`; });
+
+  function readSpace() {
+    const value = new URLSearchParams(window.location.search).get("space");
+    // Card hash navigation must not reapply a changed defaultSpace.
+    if (spaceInitialized() && value === spaceParameter) return;
+    spaceParameter = value;
+    const defaultSpace = Array.isArray(data().spaces) && data().spaces.includes(data().defaultSpace)
+      ? data().defaultSpace : "";
+    setSpace(value ?? defaultSpace);
+    if (tag() && !tags().includes(tag())) setTag("");
+  }
+
+  function changeSpace(value) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("space", value);
+    if (url.href !== window.location.href) window.history.pushState(window.history.state, "", url);
+    readSpace();
+  }
+
+  function readLocation() {
+    readSpace();
+    readHash();
+  }
 
   async function refresh() {
     if (working()) return;
@@ -60,13 +88,10 @@ export default function OslBoard() {
       const result = await response.json();
       if (result.schemaVersion !== 1 || !Array.isArray(result.tasks)) throw new Error("Неподдерживаемый формат ответа");
       setData(result);
-      if (!defaultSpaceInitialized()) {
-        const defaultSpace = Array.isArray(result.spaces) && result.spaces.includes(result.defaultSpace)
-          ? result.defaultSpace : "";
-        setSpace(defaultSpace);
-        setDefaultSpaceInitialized(true);
+      if (!spaceInitialized()) {
+        readSpace();
+        setSpaceInitialized(true);
       }
-      document.title = result.title;
       setError("");
       setRefreshed(new Date().toLocaleTimeString());
     } catch (failure) {
@@ -141,11 +166,13 @@ export default function OslBoard() {
     readHash();
     refresh();
     window.addEventListener("hashchange", readHash);
+    window.addEventListener("popstate", readLocation);
     window.addEventListener("focus", refresh);
     const interval = setInterval(() => { if (!document.hidden) refresh(); }, 30000);
     onCleanup(() => {
       clearInterval(interval);
       window.removeEventListener("hashchange", readHash);
+      window.removeEventListener("popstate", readLocation);
       window.removeEventListener("focus", refresh);
     });
   });
@@ -155,10 +182,8 @@ export default function OslBoard() {
       <h1>{data().title || "OSL"}</h1>
       <span>Перетаскивайте карточки между колонками</span>
       <input aria-label="Поиск" placeholder="Поиск, номер или osl:1234" value={search()} onInput={(event) => setSearch(event.target.value)} />
-      <select aria-label="Space" value={space()} onChange={(event) => {
-        setSpace(event.target.value);
-        if (tag() && !tags().includes(tag())) setTag("");
-      }}>
+      <select aria-label="Space" value={space()} onChange={(event) => changeSpace(event.target.value)}>
+        <Show when={spaceError()}><option value={space()}>{space()} (неизвестный Space)</option></Show>
         <option value="">Все Spaces</option><For each={spaces()}>{(value) => <option value={value}>{value}</option>}</For>
       </select>
       <select aria-label="Лейбл" value={tag()} onChange={(event) => setTag(event.target.value)}>
@@ -182,6 +207,7 @@ export default function OslBoard() {
     </header>
     <Show when={error()}><p class="osl-alert" role="alert">{error()}</p></Show>
     <Show when={writeError()}><p class="osl-alert" role="alert" style={{ "white-space": "pre-wrap" }}>{writeError()}</p></Show>
+    <Show when={spaceError()}><p class="osl-alert" role="alert">{spaceError()}</p></Show>
     <Show when={selectedError()}><p class="osl-alert" role="alert">{selectedError()} <button type="button" onClick={close}>Закрыть</button></p></Show>
     <Show when={data().issues.length}>
       <details class="osl-validation" open>
