@@ -8,12 +8,46 @@ const dateValid = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value)
 const timestampValid = (value) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
   && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString() === value;
 
+function validateWebDefaults(value, spaces) {
+  if (!value || Array.isArray(value) || typeof value !== "object"
+      || Object.keys(value).some((key) => !["timeZone", "rules"].includes(key))) {
+    throw new Error("webDefaults must contain timeZone and rules");
+  }
+  if (typeof value.timeZone !== "string" || !value.timeZone) throw new Error("webDefaults.timeZone is required");
+  try { new Intl.DateTimeFormat("en-US", { timeZone: value.timeZone }); }
+  catch { throw new Error("Invalid webDefaults.timeZone"); }
+  if (!Array.isArray(value.rules) || !value.rules.length) throw new Error("webDefaults.rules must be a nonempty array");
+  const days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  for (const [index, rule] of value.rules.entries()) {
+    const prefix = `webDefaults.rules[${index}]`;
+    if (!rule || Array.isArray(rule) || typeof rule !== "object"
+        || Object.keys(rule).some((key) => !["days", "from", "before", "space"].includes(key))) {
+      throw new Error(`${prefix}: expected a rule with days, from, before and space`);
+    }
+    if (!spaces.includes(rule.space)) throw new Error(`${prefix}: space must name a configured Space`);
+    if ("days" in rule && (!Array.isArray(rule.days) || !rule.days.length
+        || rule.days.some((day) => !days.includes(day)) || new Set(rule.days).size !== rule.days.length)) {
+      throw new Error(`${prefix}: days must be distinct weekday names (mon through sun)`);
+    }
+    for (const key of ["from", "before"]) {
+      if (key in rule && (typeof rule[key] !== "string" || !/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/.test(rule[key]))) {
+        throw new Error(`${prefix}: ${key} must be a time in HH:MM format`);
+      }
+    }
+    if (rule.from && rule.before && rule.from >= rule.before) throw new Error(`${prefix}: from must precede before`);
+    const unconditional = !["days", "from", "before"].some((key) => key in rule);
+    if (unconditional !== (index === value.rules.length - 1)) {
+      throw new Error(`${prefix}: only the final rule must be unconditional`);
+    }
+  }
+}
+
 function readConfig(root) {
   const filename = path.join(root, ".board.json");
   if (!fs.lstatSync(filename).isFile()) throw new Error(".board.json must be a regular file");
   const config = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(fs.readFileSync(filename)));
   if (!config || Array.isArray(config) || typeof config !== "object") throw new Error("Expected a board configuration object");
-  const keys = ["columns", "spaces", "captureColumn", "defaultSpace", "archiveColumn"];
+  const keys = ["columns", "spaces", "captureColumn", "defaultSpace", "archiveColumn", "webDefaults"];
   if (Object.keys(config).some((key) => !keys.includes(key))) throw new Error("Unknown board configuration property");
   const valuesValid = (values, valid) => Array.isArray(values) && values.length > 0
     && values.every((value) => typeof value === "string" && valid(value))
@@ -26,6 +60,7 @@ function readConfig(root) {
   if (!config.columns.includes(config.archiveColumn)) throw new Error("archiveColumn must name a configured column");
   if (config.captureColumn === config.archiveColumn) throw new Error("Capture and archive columns must differ");
   if (!config.spaces.includes(config.defaultSpace)) throw new Error("defaultSpace must name a configured Space");
+  validateWebDefaults(config.webDefaults, config.spaces);
   return config;
 }
 
@@ -163,6 +198,7 @@ function snapshot(root) {
     && !issues.some((issue) => /^(Cannot read|Symbolic links)/.test(issue.message));
   return { schemaVersion: 1, states: config?.columns || [], spaces: config?.spaces || [],
     defaultSpace: config?.defaultSpace || null,
+    webDefaults: config?.webDefaults || null,
     archiveState: config?.archiveColumn || null, nextId, allocationSafe, tasks, issues };
 }
 

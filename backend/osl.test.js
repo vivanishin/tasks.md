@@ -9,6 +9,7 @@ const osl = require("./osl");
 const board = {
   columns: ["00-inbox", "10-next", "10-waiting", "20-week", "90-archive"],
   spaces: ["home", "work"], captureColumn: "00-inbox", defaultSpace: "home", archiveColumn: "90-archive",
+  webDefaults: { timeZone: "Europe/Moscow", rules: [{ space: "work" }] },
 };
 
 function initialize(root, config = board) {
@@ -46,7 +47,8 @@ test("identity survives rename, lane move, Space change and archive; allocator n
 test("handwritten tasks need no timestamps; board configuration controls capture, order, Spaces and archive", (t) => {
   const root = fixture(t);
   const config = { ...board, columns: ["1 Incoming", "2 Focus", "2 Waiting", "9 Closed"],
-    spaces: ["personal", "job"], captureColumn: "1 Incoming", defaultSpace: "personal", archiveColumn: "9 Closed" };
+    spaces: ["personal", "job"], captureColumn: "1 Incoming", defaultSpace: "personal", archiveColumn: "9 Closed",
+    webDefaults: { timeZone: "Europe/Moscow", rules: [{ space: "job" }] } };
   fs.writeFileSync(path.join(root, ".board.json"), JSON.stringify(config));
   osl.init(root);
   const task = osl.capture(root, { title: "Configuration defaults" });
@@ -58,6 +60,7 @@ test("handwritten tasks need no timestamps; board configuration controls capture
   assert.deepEqual(view.states, config.columns);
   assert.deepEqual(view.spaces, config.spaces);
   assert.equal(view.archiveState, "9 Closed");
+  assert.deepEqual(view.webDefaults, config.webDefaults);
   assert.equal(view.issues.length, 0);
   assert.equal(osl.lookup(root, "osl:2"), path.join(root, "9 Closed", "human-slug.md"));
   assert.throws(() => osl.capture(root, { title: "Wrong Space", space: "home" }), /Unconfigured/);
@@ -65,6 +68,46 @@ test("handwritten tasks need no timestamps; board configuration controls capture
   assert.equal(osl.snapshot(root).allocationSafe, false);
   assert.ok(osl.snapshot(root).issues.some((issue) => issue.path === ".board.json"));
   assert.throws(() => osl.capture(root, { title: "Unsafe config" }), /directory names/);
+});
+
+test("Web defaults are validated and exposed separately from the capture default", (t) => {
+  const root = fixture(t);
+  const config = { ...board, webDefaults: { timeZone: "Europe/Moscow", rules: [
+    { days: ["sat", "sun"], from: "09:00", before: "17:00", space: "work" },
+    { space: "home" },
+  ] } };
+  fs.writeFileSync(path.join(root, ".board.json"), JSON.stringify(config));
+  assert.deepEqual(osl.readConfig(root).webDefaults, config.webDefaults);
+  fs.writeFileSync(path.join(root, ".board.json"), JSON.stringify(board));
+  osl.capture(root, { title: "Capture keeps home while Web defaults to work" });
+  const view = osl.snapshot(root);
+  assert.equal(view.tasks[0].space, "home");
+  assert.deepEqual(view.webDefaults.rules, [{ space: "work" }]);
+
+  for (const invalid of [
+    undefined, null, [],
+    { ...board.webDefaults, timeZone: null },
+    { ...board.webDefaults, timeZone: "Nowhere/Invalid" },
+    { ...board.webDefaults, extra: true },
+    { ...board.webDefaults, rules: [] },
+    ...[
+      [null], [[]], [{ space: "missing" }], [{ space: "work", after: "09:00" }],
+      [{ days: ["sat"], space: "work" }],
+      [{ space: "work" }, { space: "home" }],
+      ...[
+        { days: [] }, { days: null }, { days: ["Sat"] }, { days: ["sat", "sat"] },
+        { from: "24:00" }, { from: "09:60" }, { from: "9:30" }, { before: 12 },
+        { from: "22:00", before: "08:00" }, { from: "13:30", before: "13:30" },
+      ].map((condition) => [{ space: "work", ...condition }, { space: "home" }]),
+    ].map((rules) => ({ timeZone: "Europe/Moscow", rules })),
+  ]) {
+    fs.writeFileSync(path.join(root, ".board.json"), JSON.stringify({ ...board, webDefaults: invalid }));
+    assert.throws(() => osl.readConfig(root), /webDefaults/, JSON.stringify(invalid));
+    const invalidView = osl.snapshot(root);
+    assert.equal(invalidView.allocationSafe, false);
+    assert.ok(invalidView.issues.some((issue) => issue.path === ".board.json"));
+    assert.equal(invalidView.webDefaults, null);
+  }
 });
 
 test("duplicate IDs are visible and cannot be resolved arbitrarily", (t) => {
@@ -172,6 +215,7 @@ test("OSL HTTP rejects content edits and uploads without touching data or config
   assert.equal(response.headers.get("cache-control"), "no-store");
   const data = await response.json();
   assert.equal(data.tasks[0].id, task.id);
+  assert.deepEqual(data.webDefaults, board.webDefaults);
   assert.equal(data.git.unpushed, null);
   assert.equal(typeof data.git.error, "string");
   assert.equal((await fetch(`${base}/osl/_api/resource/%2e%2e/%2e%2e/etc`)).status, 404);

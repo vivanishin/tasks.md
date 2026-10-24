@@ -5,6 +5,7 @@ import { DragAndDrop } from "./drag-and-drop";
 import { api } from "../api";
 import { useI18n } from "../i18n";
 import { renderMarkdown, visibleTags, markdownLink, taskFilePath } from "../osl-content.mjs";
+import { defaultSpaceFor } from "../osl-default-space.mjs";
 import "../stylesheets/index.css";
 import "../stylesheets/osl.css";
 
@@ -58,12 +59,10 @@ export default function OslBoard() {
 
   function readSpace() {
     const value = new URLSearchParams(window.location.search).get("space");
-    // Card hash navigation must not reapply a changed defaultSpace.
+    // Card hash navigation must not reapply the starting view rules.
     if (spaceInitialized() && value === spaceParameter) return;
     spaceParameter = value;
-    const defaultSpace = Array.isArray(data().spaces) && data().spaces.includes(data().defaultSpace)
-      ? data().defaultSpace : "";
-    setSpace(value ?? defaultSpace);
+    setSpace(value ?? defaultSpaceFor(data().webDefaults));
     if (tag() && !tags().includes(tag())) setTag("");
   }
 
