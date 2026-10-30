@@ -24,6 +24,45 @@ function fixture(t) {
   return root;
 }
 
+test("capture creates safe English title slugs and preserves title and identity", (t) => {
+  const root = fixture(t);
+  for (const [title, slug] of [
+    ["Fix login bug", "fix-login-bug"],
+    ["  HTTP / API: Fix #42!  ", "http-api-fix-42"],
+    ["../Escape\\..\\Path", "escape-path"],
+    ["Don’t break — Node.js", "don-t-break-node-js"],
+    ["Fix login bug", "fix-login-bug"],
+  ]) {
+    const task = osl.capture(root, { title });
+    assert.equal(task.path, path.join(root, board.captureColumn, `${task.id}-${slug}.md`));
+    assert.match(fs.readFileSync(task.path, "utf8"), new RegExp(`^\\[id:${task.id}\\]`, "m"));
+    assert.ok(fs.readFileSync(task.path, "utf8").includes(`\n# ${title.trim()}\n`));
+    assert.equal(osl.lookup(root, task.reference), task.path);
+  }
+  assert.equal(osl.snapshot(root).issues.length, 0);
+});
+
+test("capture keeps numeric filenames for non-English titles and titles without letters", (t) => {
+  const root = fixture(t);
+  for (const title of ["Русская задача", "Fix русскую задачу", "Café notes", "Cafe\u0301 notes", "任务", "12345", "--- !!!", "🚀"]) {
+    const task = osl.capture(root, { title });
+    assert.equal(task.path, path.join(root, board.captureColumn, `${task.id}.md`));
+    assert.equal(osl.lookup(root, task.id), task.path);
+  }
+  assert.equal(osl.snapshot(root).issues.length, 0);
+});
+
+test("capture bounds long slugs without changing the full title", (t) => {
+  const root = fixture(t);
+  for (const title of ["A".repeat(300), `${"A".repeat(79)} ${"B".repeat(300)}`]) {
+    const task = osl.capture(root, { title });
+    assert.ok(path.basename(task.path).length <= `${task.id}-.md`.length + 80);
+    assert.doesNotMatch(path.basename(task.path), /-\.md$/);
+    assert.equal(osl.snapshot(root).tasks.find((item) => item.id === task.id).title, title);
+  }
+  assert.equal(osl.snapshot(root).issues.length, 0);
+});
+
 test("identity survives rename, lane move, Space change and archive; allocator never reuses", (t) => {
   const root = fixture(t);
   const first = osl.capture(root, { title: "Первая задача", space: "home" });
@@ -246,7 +285,7 @@ test("scoped commit excludes unrelated staged files; a failed push retains the l
   const root = path.join(repo, "tasks");
   fs.mkdirSync(root);
   initialize(root);
-  osl.capture(root, { title: "Commit only this" });
+  const task = osl.capture(root, { title: "Commit only this" });
   fs.writeFileSync(path.join(repo, "unrelated.txt"), "unrelated staged change\n");
   git("add", "unrelated.txt");
   const env = { ...process.env, OSL_NODE: process.execPath, OSL_APP: path.dirname(__dirname), OSL_TASKS: root };
@@ -255,12 +294,12 @@ test("scoped commit excludes unrelated staged files; a failed push retains the l
   const committed = git("diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").split("\n");
   assert.ok(committed.every((filename) => filename.startsWith("tasks/")));
   assert.equal(git("diff", "--cached", "--name-only"), "unrelated.txt");
-  fs.appendFileSync(path.join(root, "00-inbox", "1.md"), "\nAnother accepted local change\n");
+  fs.appendFileSync(task.path, "\nAnother accepted local change\n");
   git("remote", "add", "origin", path.join(repo, "absent-remote.git"));
   result = spawnSync("bash", [helper, "commit", "--push"], { env, encoding: "utf8" });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /retained.*pending synchronization/);
-  assert.match(git("show", "HEAD:tasks/00-inbox/1.md"), /accepted local change/);
+  assert.match(git("show", `HEAD:${path.relative(repo, task.path)}`), /accepted local change/);
   assert.equal(git("diff", "--cached", "--name-only"), "unrelated.txt");
 });
 

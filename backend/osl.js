@@ -226,6 +226,13 @@ function init(root) {
   }
 }
 
+function titleSlug(title) {
+  const letters = title.match(/[\p{L}\p{M}]/gu);
+  if (!letters || letters.some((letter) => !/^[A-Za-z]$/.test(letter))) return "";
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "").slice(0, 80).replace(/-$/, "");
+}
+
 function capture(root, { title, space, tags = [], body = "", state }) {
   const config = readConfig(root);
   space ??= config.defaultSpace;
@@ -242,9 +249,11 @@ function capture(root, { title, space, tags = [], body = "", state }) {
     const current = snapshot(root);
     if (!current.allocationSafe) throw new Error("Task identities or allocator are invalid; run validate before capture");
     const id = current.nextId;
-    const filename = path.join(root, state, `${id}.md`);
+    const slug = titleSlug(title);
+    const relativePath = path.join(state, `${id}${slug ? `-${slug}` : ""}.md`);
+    const filename = path.join(root, relativePath);
     const content = `[id:${id}]\n[tag:space::${space}]${tags.map((tag) => ` [tag:${tag}]`).join("")}\n\n# ${title.trim()}\n\n${body.trimEnd()}\n`;
-    const parsed = parseTask(content, `${state}/${id}.md`, config);
+    const parsed = parseTask(content, relativePath, config);
     if (parsed.errors.length) throw new Error(parsed.errors.join("; "));
     // Reserve before writing the card: a failed capture may leave a gap, never reuse.
     const temporary = path.join(root, ".next-id.tmp");
