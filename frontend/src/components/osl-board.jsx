@@ -381,7 +381,6 @@ export default function OslBoard() {
   return <>
     <header class="app-header osl-header">
       <h1>{data().title || "OSL"}</h1>
-      <span>Перетаскивайте карточки между колонками</span>
       <input aria-label="Поиск" placeholder="Поиск, номер или osl:1234" value={search()} onInput={(event) => searchBoard(event.target.value)} />
       <select aria-label="Space" value={space()} onChange={(event) => changeSpace(event.target.value)}>
         <Show when={spaceError()}><option value={space()}>{space()} (неизвестный Space)</option></Show>
