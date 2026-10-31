@@ -24,6 +24,7 @@ export default function OslBoard() {
   const [search, setSearch] = createSignal("");
   const [space, setSpace] = createSignal("");
   const [spaceInitialized, setSpaceInitialized] = createSignal(false);
+  const [collapsedColumns, setCollapsedColumns] = createSignal([]);
   let spaceParameter;
   const [tag, setTag] = createSignal("");
   const [archive, setArchive] = createSignal(false);
@@ -61,6 +62,47 @@ export default function OslBoard() {
     return "";
   });
   createEffect(() => { document.title = `${space() || "Все Spaces"} — ${data().title || "OSL"}`; });
+  createEffect(() => {
+    if (!spaceInitialized()) return;
+    const key = columnPreferencesKey();
+    let columns = [];
+    try {
+      const saved = JSON.parse(localStorage.getItem(key));
+      if (Array.isArray(saved)) columns = saved.filter((column) => typeof column === "string");
+    } catch {}
+    setCollapsedColumns(columns);
+  });
+
+  function columnPreferencesKey() {
+    return `osl:collapsed-columns:${window.location.pathname}:${space()}`;
+  }
+
+  function saveCollapsedColumns(columns) {
+    setCollapsedColumns(columns);
+    try { localStorage.setItem(columnPreferencesKey(), JSON.stringify(columns)); }
+    catch {}
+  }
+
+  const isCollapsed = (column) => collapsedColumns().includes(column);
+  const columnContentId = (column) => `lane-content-${encodeURIComponent(column)}`;
+
+  function expandColumn(column) {
+    if (isCollapsed(column)) saveCollapsedColumns(collapsedColumns().filter((value) => value !== column));
+  }
+
+  function toggleColumn(column) {
+    if (working()) return;
+    if (isCollapsed(column)) expandColumn(column);
+    else saveCollapsedColumns([...collapsedColumns(), column]);
+  }
+
+  function searchBoard(value) {
+    setSearch(value);
+    if (exact()) {
+      const task = visible()[0];
+      if (task) expandColumn(task.state);
+    }
+  }
 
   function readSpace() {
     const value = new URLSearchParams(window.location.search).get("space");
@@ -148,6 +190,7 @@ export default function OslBoard() {
       }
     } finally { setCreating(false); }
     if (task) {
+      expandColumn(captureColumn());
       setCaptureColumn("");
       await refresh();
       window.location.hash = task.reference;
@@ -166,7 +209,7 @@ export default function OslBoard() {
   async function moveCard(change) {
     const previous = data();
     const task = previous.tasks.find((task) => `card-${task.path}` === change.id);
-    const column = change.to.slice("lane-content-".length);
+    const column = decodeURIComponent(change.to.slice("lane-content-".length));
     if (!task?.id || task.state === column || working()) {
       // Replace cards to reset upstream drag-and-drop's DOM transforms.
       setData({ ...previous, tasks: previous.tasks.map((task) => ({ ...task })) });
@@ -179,6 +222,7 @@ export default function OslBoard() {
       ? { ...task, state: column, path: newPath } : item) });
     try {
       await writeRequest(`/resource/${task.path.split("/").map(encodeURIComponent).join("/")}`, "PATCH", { newPath });
+      expandColumn(column);
     } catch (failure) {
       setData(previous);
       setWriteError(`Не удалось завершить перенос: ${failure.message}`);
@@ -226,7 +270,7 @@ export default function OslBoard() {
     <header class="app-header osl-header">
       <h1>{data().title || "OSL"}</h1>
       <span>Перетаскивайте карточки между колонками</span>
-      <input aria-label="Поиск" placeholder="Поиск, номер или osl:1234" value={search()} onInput={(event) => setSearch(event.target.value)} />
+      <input aria-label="Поиск" placeholder="Поиск, номер или osl:1234" value={search()} onInput={(event) => searchBoard(event.target.value)} />
       <select aria-label="Space" value={space()} onChange={(event) => changeSpace(event.target.value)}>
         <Show when={spaceError()}><option value={space()}>{space()} (неизвестный Space)</option></Show>
         <option value="">Все Spaces</option><For each={spaces()}>{(value) => <option value={value}>{value}</option>}</For>
@@ -264,16 +308,20 @@ export default function OslBoard() {
     <Show when={!busy() && !tasks().length && !error()}><p class="osl-empty">Задач пока нет. Добавьте первую кнопкой «+» у нужного столбца.</p></Show>
     <DragAndDrop.Provider>
     <main class="lanes osl-lanes" aria-label="Доска OSL" inert={working()}>
-      <For each={states()}>{(state) => <section class="lane">
+      <For each={states()}>{(state) => <section class="lane" classList={{ "osl-lane-collapsed": isCollapsed(state) }} aria-label={state}>
         <header class="lane__header">
-          <h2>{state} <small>({visible().filter((task) => task.state === state).length})</small></h2>
+          <h2><button type="button" class="osl-lane-toggle" aria-expanded={!isCollapsed(state)} aria-controls={columnContentId(state)}
+            title={`${isCollapsed(state) ? "Развернуть" : "Свернуть"} столбец ${state}`} onClick={() => toggleColumn(state)} disabled={working()}>
+            <span aria-hidden="true">{isCollapsed(state) ? "▸" : "▾"}</span>
+            <span class="osl-lane-title">{state} <small>({visible().filter((task) => task.state === state).length})</small></span>
+          </button></h2>
           <Show when={data().states.includes(state)}>
             <button type="button" class="small" title="Добавить задачу" aria-label={`Добавить задачу в ${state}`}
               onClick={() => startCapture(state)} disabled={working()}>+</button>
           </Show>
         </header>
-        <DragAndDrop.Container class="lane__content" group="cards" id={`lane-content-${state}`} onChange={moveCard}>
-          <For each={visible().filter((task) => task.state === state)}>{(task) => <Card
+        <DragAndDrop.Container class="lane__content" group="cards" id={columnContentId(state)} onChange={moveCard}>
+          <For each={isCollapsed(state) ? [] : visible().filter((task) => task.state === state)}>{(task) => <Card
             name={task.path} disableDrag={!task.id || task.errors.length > 0} t={t} locale={locale()}
             content={task.body.slice(0, 160)} dueDate={task.due}
             tags={displayedTags(task).map((name) => ({ name, backgroundColor: tagColor(name) }))}

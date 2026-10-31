@@ -8,8 +8,18 @@
 .osl-lanes { min-height: 0; gap: 1.2rem; }
 .osl-lanes .lane { min-width: 260px; max-width: 320px; }
 .osl-lanes h2 { font-size: 1rem; margin: 0; }
-.osl-lanes .lane__header h2 { min-width: 0; overflow-wrap: anywhere; }
+.osl-lanes .lane__header h2 { min-width: 0; flex: 1; overflow-wrap: anywhere; }
 .osl-lanes .lane__content { overflow-y: auto; }
+.osl-lane-toggle { display: flex; align-items: center; gap: .4rem; width: 100%; height: auto; padding: .2rem 0; background: transparent; text-align: start; white-space: normal; font: inherit; }
+.osl-lane-toggle > :first-child { flex-shrink: 0; }
+.osl-lane-toggle:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.osl-lanes .lane.osl-lane-collapsed { min-width: 3rem; max-width: 3rem; background: var(--color-background-2); border-radius: 8px; }
+.osl-lane-collapsed .lane__header { flex-direction: column; gap: .75rem; align-items: center; min-height: 0; max-height: 100%; margin-bottom: 0; }
+.osl-lane-collapsed .lane__header h2 { width: 100%; min-height: 0; }
+.osl-lane-collapsed .lane__header > .small { flex-shrink: 0; }
+.osl-lane-collapsed .osl-lane-toggle { flex-direction: column; gap: .5rem; min-height: 0; max-height: 100%; }
+.osl-lane-collapsed .osl-lane-title { writing-mode: vertical-rl; white-space: nowrap; min-height: 0; overflow: hidden; text-overflow: ellipsis; }
+.osl-lane-collapsed .lane__content { padding: 0; overflow: hidden; min-height: 0; }
 .osl-reference { display: block; margin-top: .4rem; opacity: .7; }
 .osl-card-error { display: block; color: var(--color-alt-1); font-size: .75rem; margin-top: .4rem; }
 .osl-alert, .osl-validation, .osl-empty { margin: 0; padding: .75rem 1.5rem; }
