@@ -9,6 +9,101 @@ import { defaultSpaceFor } from "../osl-default-space.mjs";
 import "../stylesheets/index.css";
 import "../stylesheets/osl.css";
 
+function TaskColumnMenu(props) {
+  const [open, setOpen] = createSignal(false);
+  const [position, setPosition] = createSignal({ left: 0, top: 0, height: window.innerHeight - 16 });
+  let trigger, menu;
+  let focusLast = false;
+  const menuId = () => `osl-task-columns-${props.task.id}`;
+
+  function close(restoreFocus = false) {
+    setOpen(false);
+    if (restoreFocus && trigger?.isConnected) trigger.focus({ preventScroll: true });
+  }
+
+  function show(last = false) {
+    if (props.disabled) return;
+    focusLast = last;
+    setPosition({ left: 0, top: 0, height: window.innerHeight - 16 });
+    setOpen(true);
+  }
+
+  function place(element) {
+    queueMicrotask(() => {
+      if (!element.isConnected) return;
+      const anchor = trigger.getBoundingClientRect();
+      const rect = element.getBoundingClientRect();
+      const below = window.innerHeight - anchor.bottom - 8;
+      const above = anchor.top - 8;
+      const down = below >= rect.height || below >= above;
+      const height = Math.min(rect.height, Math.max(1, down ? below : above));
+      setPosition({ left: Math.max(8, Math.min(anchor.left, window.innerWidth - rect.width - 8)),
+        top: down ? anchor.bottom : Math.max(8, anchor.top - height), height });
+      const items = element.querySelectorAll("button");
+      focusItem(items[focusLast ? items.length - 1 : 0]);
+    });
+  }
+
+  function focusItem(item) {
+    if (!item) return;
+    item.focus({ preventScroll: true });
+    if (item.offsetTop < menu.scrollTop) menu.scrollTop = item.offsetTop;
+    if (item.offsetTop + item.offsetHeight > menu.scrollTop + menu.clientHeight)
+      menu.scrollTop = item.offsetTop + item.offsetHeight - menu.clientHeight;
+  }
+
+  async function choose(column) {
+    close(true);
+    await props.onMove(column);
+    if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+  }
+
+  function menuKey(event) {
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(true); }
+    if (event.key === "Tab") close(true);
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const items = [...menu.querySelectorAll("button")];
+    const index = items.indexOf(document.activeElement);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
+      : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+    focusItem(items[next]);
+  }
+
+  createEffect(() => { if (props.disabled) close(); });
+  onMount(() => {
+    const outside = (event) => { if (!trigger.contains(event.target) && !menu?.contains(event.target)) close(); };
+    const scroll = (event) => { if (!menu?.contains(event.target)) close(); };
+    const resize = () => close();
+    document.addEventListener("pointerdown", outside);
+    window.addEventListener("scroll", scroll, true);
+    window.addEventListener("resize", resize);
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", outside);
+      window.removeEventListener("scroll", scroll, true);
+      window.removeEventListener("resize", resize);
+    });
+  });
+
+  return <span class="osl-column-switch">
+    <button type="button" class="osl-column-current" ref={trigger} title="Переместить в другой столбец"
+      aria-label={`Столбец: ${props.task.state}. Переместить`} aria-haspopup="menu" aria-expanded={open()}
+      aria-controls={menuId()} disabled={props.disabled} onClick={() => open() ? close(true) : show()}
+      onKeyDown={(event) => { if (["ArrowDown", "ArrowUp"].includes(event.key)) {
+        event.preventDefault(); show(event.key === "ArrowUp");
+      } }}>{props.task.state}</button>
+    <Show when={open()}><span class="osl-column-menu" role="menu" id={menuId()} aria-label="Переместить задачу"
+      ref={(element) => { menu = element; place(element); }} onKeyDown={menuKey}
+      style={{ left: `${position().left}px`, top: `${position().top}px`, "max-height": `${position().height}px` }}>
+      <For each={props.columns.filter((column) => column !== props.task.state)}>{(column) =>
+        <button type="button" role="menuitem" onClick={() => choose(column)}>
+          {column === props.archiveState ? "В архив" : column}
+        </button>
+      }</For>
+    </span></Show>
+  </span>;
+}
+
 export default function OslBoard() {
   const [data, setData] = createSignal({ tasks: [], states: [], spaces: [], archiveState: null, issues: [] });
   const [error, setError] = createSignal("");
@@ -20,6 +115,7 @@ export default function OslBoard() {
   const [captureTitle, setCaptureTitle] = createSignal("");
   const [captureSpace, setCaptureSpace] = createSignal("");
   const [captureError, setCaptureError] = createSignal("");
+  const [taskMoveError, setTaskMoveError] = createSignal("");
   const [writeError, setWriteError] = createSignal("");
   const [search, setSearch] = createSignal("");
   const [space, setSpace] = createSignal("");
@@ -215,7 +311,20 @@ export default function OslBoard() {
       setData({ ...previous, tasks: previous.tasks.map((task) => ({ ...task })) });
       return;
     }
+    await moveTask(task, column);
+  }
+
+  async function moveSelectedTask(task, column) {
+    if (working() || task.errors.length || !data().states.includes(column) || task.state === column) return;
+    setTaskMoveError("");
+    const failure = await moveTask(task, column);
+    if (reference() === `osl:${task.id}`) setTaskMoveError(failure);
+  }
+
+  async function moveTask(task, column) {
+    const previous = data();
     const newPath = `${column}/${task.path.split("/").at(-1)}`;
+    let failureMessage = "";
     setWriteError("");
     setMoving(true);
     setData({ ...previous, tasks: previous.tasks.map((item) => item === task
@@ -225,17 +334,20 @@ export default function OslBoard() {
       expandColumn(column);
     } catch (failure) {
       setData(previous);
-      setWriteError(`Не удалось завершить перенос: ${failure.message}`);
+      failureMessage = `Не удалось завершить перенос osl:${task.id}: ${failure.message}`;
+      setWriteError(failureMessage);
     } finally {
       setMoving(false);
       await refresh();
     }
+    return failureMessage;
   }
 
   function readHash() {
     try { setReference(decodeURIComponent(window.location.hash.slice(1))); }
     catch { setReference("invalid"); }
     setCopyStatus("");
+    setTaskMoveError("");
   }
   function close() { window.location.hash = ""; }
   async function copy(text) {
@@ -367,15 +479,20 @@ export default function OslBoard() {
         </form>
       </dialog></Portal>
     </Show>
-    <Show when={selected().length === 1 && reference()} keyed>{() => {
-      const task = () => selected()[0];
+    <Show when={selected().length === 1 && reference()} keyed>{(taskReference) => {
+      const task = () => tasks().find((task) => `osl:${task.id}` === taskReference);
       return <Portal><dialog class="osl-detail" aria-label="Задача OSL"
         ref={(element) => queueMicrotask(() => { if (element.isConnected && !element.open) element.showModal(); })}
         onCancel={(event) => { event.preventDefault(); close(); }}>
         <header><h2>{task().title}</h2><button type="button" onClick={close}>Закрыть</button></header>
-        <p class="osl-task-meta">{[`osl:${task().id}`, task().state, ...displayedTags(task())].join(" · ")}</p>
+        <p class="osl-task-meta">{`osl:${task().id} · `}<TaskColumnMenu task={task()} columns={data().states}
+          archiveState={data().archiveState} disabled={working() || task().errors.length > 0}
+          onMove={(column) => moveSelectedTask(task(), column)} />
+          <For each={displayedTags(task())}>{(tag) => <span>{` · ${tag}`}</span>}</For>
+        </p>
         <Show when={task().due}><p>Срок / пересмотр: {task().due}</p></Show>
         <Show when={task().errors.length}><p class="osl-alert">{task().errors.join("; ")}</p></Show>
+        <Show when={taskMoveError()}><p class="osl-alert osl-task-move-error" role="alert" style={{ "white-space": "pre-wrap" }}>{taskMoveError()}</p></Show>
         <div class="osl-copy">
           <button type="button" onClick={() => copy(`osl:${task().id}`)}>Копировать osl:</button>
           <button type="button" onClick={() => copy(orgLink(task()))}>Копировать Org-ссылку</button>

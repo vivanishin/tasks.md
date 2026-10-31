@@ -32,6 +32,12 @@ dialog.osl-detail { width: min(900px, 95vw); height: auto; max-height: 90dvh; bo
 .osl-detail h2 { margin: 0; font-size: 1.3rem; overflow-wrap: anywhere; }
 .osl-copy { display: flex; flex-wrap: wrap; gap: .5rem; }
 .osl-task-meta { overflow-wrap: anywhere; line-height: 1.5; }
+.osl-column-current { display: inline; height: auto; padding: 0; border-radius: 0; background: transparent; color: inherit; box-shadow: none; font: inherit; vertical-align: baseline; white-space: normal; text-decoration: underline dotted; text-underline-offset: .2em; }
+.osl-column-current:disabled { text-decoration: none; cursor: default; }
+.osl-column-current:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.osl-column-menu { position: fixed; z-index: 1; display: flex; flex-direction: column; width: max-content; max-width: min(24rem, calc(100vw - 1rem)); max-height: min(20rem, calc(100dvh - 1rem)); padding: .25rem; overflow-y: auto; scrollbar-width: thin; border: 1px solid var(--color-background-4); border-radius: 6px; background: var(--color-background-2); box-shadow: 0 .25rem 1rem rgb(0 0 0 / .3); }
+.osl-column-menu > button { height: auto; flex-shrink: 0; padding: .35rem .75rem; text-align: start; white-space: normal; overflow-wrap: anywhere; background: transparent; }
+.osl-column-menu > button:is(:hover, :focus-visible) { background: var(--color-background-3); }
 .osl-open-emacs { display: inline-flex; align-items: center; padding: 4px 15px; border-radius: 6px; background: var(--color-background-4); }
 .osl-body { overflow-wrap: anywhere; line-height: 1.6; padding: .75rem 0 1.5rem; }
 .osl-body :is(h1, h2, h3, h4, h5, h6) { margin: 1.2em 0 .5em; font-weight: 600; line-height: 1.3; }
