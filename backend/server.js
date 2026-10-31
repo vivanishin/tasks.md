@@ -59,7 +59,7 @@ if (OSL_READ_ONLY) {
     ctx.set("Cache-Control", "no-store");
     ctx.set("X-Content-Type-Options", "nosniff");
     if ((ctx.method === "PATCH" && ctx.path.startsWith(`${BASE_PATH}/_api/resource/`))
-        || (ctx.method === "POST" && ctx.path === `${BASE_PATH}/_api/osl/push`)) {
+        || (ctx.method === "POST" && ["/osl/push", "/osl/capture"].some((route) => ctx.path === `${BASE_PATH}/_api${route}`))) {
       await next();
       return;
     }
@@ -88,6 +88,38 @@ if (OSL_READ_ONLY) {
   });
   app.use(mount(BASE_PATH || "/", serve("static")));
 }
+
+router.post("/osl/capture", async (ctx) => {
+  if (!OSL_READ_ONLY) { ctx.status = 404; return; }
+  const body = ctx.request.body;
+  if (!ctx.is("application/json") || !body || Array.isArray(body)
+      || Object.keys(body).some((key) => !["title", "space", "state"].includes(key))
+      || ["title", "space", "state"].some((key) => typeof body[key] !== "string" || !body[key].trim())) {
+    ctx.status = 400;
+    ctx.body = { error: "Expected a title, Space and configured column" };
+    return;
+  }
+  if (!process.env.OSL_HELPER) {
+    ctx.status = 503;
+    ctx.body = { error: "Configure OSL_HELPER for Git operations" };
+    return;
+  }
+  let task;
+  try { task = osl.capture(TASKS_DIR, body); }
+  catch (error) {
+    ctx.status = 400;
+    ctx.body = { error: error.message };
+    return;
+  }
+  try {
+    await runHelper(["commit", "--task", task.reference, "--message", `planning/osl/tasks: capture ${task.reference}`]);
+    ctx.status = 201;
+    ctx.body = task;
+  } catch (error) {
+    ctx.status = typeof error.code === "number" ? 409 : 503;
+    ctx.body = { task, error: error.stderr?.trim() || error.message };
+  }
+});
 
 router.post("/osl/push", async (ctx) => {
   if (!OSL_READ_ONLY) { ctx.status = 404; return; }

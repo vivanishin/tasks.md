@@ -15,6 +15,11 @@ export default function OslBoard() {
   const [busy, setBusy] = createSignal(false);
   const [moving, setMoving] = createSignal(false);
   const [pushing, setPushing] = createSignal(false);
+  const [creating, setCreating] = createSignal(false);
+  const [captureColumn, setCaptureColumn] = createSignal("");
+  const [captureTitle, setCaptureTitle] = createSignal("");
+  const [captureSpace, setCaptureSpace] = createSignal("");
+  const [captureError, setCaptureError] = createSignal("");
   const [writeError, setWriteError] = createSignal("");
   const [search, setSearch] = createSignal("");
   const [space, setSpace] = createSignal("");
@@ -27,7 +32,7 @@ export default function OslBoard() {
   const [copyStatus, setCopyStatus] = createSignal("");
   const [refreshed, setRefreshed] = createSignal("");
   const { t, locale } = useI18n();
-  const working = () => busy() || moving() || pushing();
+  const working = () => busy() || moving() || pushing() || creating();
   const tasks = () => data().tasks;
   const spaces = createMemo(() => [...new Set([...(data().spaces || []), ...tasks().map((task) => task.space).filter(Boolean)])]);
   const spaceError = createMemo(() => spaceInitialized() && space() && !spaces().includes(space())
@@ -104,7 +109,48 @@ export default function OslBoard() {
     });
     if (!response.ok) {
       const failure = await response.json().catch(() => ({}));
-      throw new Error(failure.error || `HTTP ${response.status}`);
+      const error = new Error(failure.error || `HTTP ${response.status}`);
+      error.task = failure.task;
+      throw error;
+    }
+    return response.status === 204 ? null : response.json();
+  }
+
+  function startCapture(column) {
+    if (working()) return;
+    setCaptureTitle("");
+    setCaptureSpace(data().spaces.includes(space()) ? space() : data().defaultSpace);
+    setCaptureError("");
+    setCaptureColumn(column);
+  }
+
+  function cancelCapture() {
+    if (!creating()) setCaptureColumn("");
+  }
+
+  async function captureTask(event) {
+    event.preventDefault();
+    if (working() || !captureTitle().trim()) return;
+    setCreating(true);
+    setCaptureError("");
+    setWriteError("");
+    let task;
+    try {
+      task = await writeRequest("/osl/capture", "POST", {
+        title: captureTitle().trim(), space: captureSpace(), state: captureColumn(),
+      });
+    } catch (failure) {
+      if (failure.task) {
+        task = failure.task;
+        setWriteError(`Карточка ${task.reference} создана, но локальный commit не выполнен: ${failure.message}`);
+      } else {
+        setCaptureError(`Не удалось добавить задачу: ${failure.message}`);
+      }
+    } finally { setCreating(false); }
+    if (task) {
+      setCaptureColumn("");
+      await refresh();
+      window.location.hash = task.reference;
     }
   }
 
@@ -202,7 +248,7 @@ export default function OslBoard() {
         </span>
       </Show>
       <Show when={data().git?.error}><span title={data().git.error}>Статус Git недоступен</span></Show>
-      <small aria-live="polite">{pushing() ? "Push…" : moving() ? "Перенос и коммит…" : busy() ? "Обновление…" : refreshed() && `Обновлено ${refreshed()}`}</small>
+      <small aria-live="polite">{pushing() ? "Push…" : moving() ? "Перенос и коммит…" : creating() ? "Создание…" : busy() ? "Обновление…" : refreshed() && `Обновлено ${refreshed()}`}</small>
     </header>
     <Show when={error()}><p class="osl-alert" role="alert">{error()}</p></Show>
     <Show when={writeError()}><p class="osl-alert" role="alert" style={{ "white-space": "pre-wrap" }}>{writeError()}</p></Show>
@@ -215,11 +261,17 @@ export default function OslBoard() {
       </details>
     </Show>
     <Show when={exact() && !visible().length}><p class="osl-alert">Задача osl:{exact()} не найдена, включая архив.</p></Show>
-    <Show when={!busy() && !tasks().length && !error()}><p class="osl-empty">Задач пока нет. Добавьте первую командой osl.sh capture или M-x osl-capture.</p></Show>
+    <Show when={!busy() && !tasks().length && !error()}><p class="osl-empty">Задач пока нет. Добавьте первую кнопкой «+» у нужного столбца.</p></Show>
     <DragAndDrop.Provider>
     <main class="lanes osl-lanes" aria-label="Доска OSL" inert={working()}>
       <For each={states()}>{(state) => <section class="lane">
-        <header class="lane__header"><h2>{state} <small>({visible().filter((task) => task.state === state).length})</small></h2></header>
+        <header class="lane__header">
+          <h2>{state} <small>({visible().filter((task) => task.state === state).length})</small></h2>
+          <Show when={data().states.includes(state)}>
+            <button type="button" class="small" title="Добавить задачу" aria-label={`Добавить задачу в ${state}`}
+              onClick={() => startCapture(state)} disabled={working()}>+</button>
+          </Show>
+        </header>
         <DragAndDrop.Container class="lane__content" group="cards" id={`lane-content-${state}`} onChange={moveCard}>
           <For each={visible().filter((task) => task.state === state)}>{(task) => <Card
             name={task.path} disableDrag={!task.id || task.errors.length > 0} t={t} locale={locale()}
@@ -234,6 +286,39 @@ export default function OslBoard() {
     </main>
     <DragAndDrop.Target />
     </DragAndDrop.Provider>
+    <Show when={captureColumn()}>
+      <Portal><dialog class="osl-detail osl-capture" aria-label="Новая задача"
+        ref={(element) => queueMicrotask(() => {
+          if (element.isConnected && !element.open) {
+            element.showModal();
+            element.querySelector("input")?.focus();
+          }
+        })}
+        onCancel={(event) => { event.preventDefault(); cancelCapture(); }}>
+        <form onSubmit={captureTask}>
+          <h2>Новая задача</h2>
+          <p>Столбец: {captureColumn()}</p>
+          <label for="osl-capture-title">Название</label>
+          <input id="osl-capture-title" type="text" required value={captureTitle()} disabled={creating()}
+            onInput={(event) => setCaptureTitle(event.target.value)} />
+          <fieldset disabled={creating()}>
+            <legend>Space</legend>
+            <div class="osl-capture-spaces">
+              <For each={data().spaces}>{(value) => <label>
+                <input type="radio" name="osl-capture-space" value={value} checked={captureSpace() === value}
+                  onChange={() => setCaptureSpace(value)} />
+                {value}
+              </label>}</For>
+            </div>
+          </fieldset>
+          <Show when={captureError()}><p class="osl-alert" role="alert">{captureError()}</p></Show>
+          <div class="osl-capture-actions">
+            <button type="submit" disabled={working() || !captureTitle().trim()}>{creating() ? "Добавление…" : "Добавить"}</button>
+            <button type="button" onClick={cancelCapture} disabled={creating()}>Отмена</button>
+          </div>
+        </form>
+      </dialog></Portal>
+    </Show>
     <Show when={selected().length === 1 && reference()} keyed>{() => {
       const task = () => selected()[0];
       return <Portal><dialog class="osl-detail" aria-label="Задача OSL"

@@ -303,6 +303,97 @@ test("scoped commit excludes unrelated staged files; a failed push retains the l
   assert.equal(git("diff", "--cached", "--name-only"), "unrelated.txt");
 });
 
+test("OSL Web capture commits only the new task and allocator and reports a retained task on commit failure", async (t) => {
+  const helper = process.env.OSL_HELPER;
+  if (!helper) return t.skip("Set OSL_HELPER to test Web capture");
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "osl-web-capture "));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const git = (...args) => {
+    const result = spawnSync("git", ["-C", repo, ...args], { encoding: "utf8",
+      env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" } });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  git("init", "-q");
+  git("config", "user.name", "OSL test");
+  git("config", "user.email", "osl-test@example.invalid");
+  git("config", "core.hooksPath", path.join(path.dirname(helper), "../../.githooks"));
+  const root = path.join(repo, "tasks");
+  fs.mkdirSync(root);
+  initialize(root);
+  const other = osl.capture(root, { title: "Unrelated task" });
+  fs.writeFileSync(path.join(repo, "unrelated.txt"), "original\n");
+  git("add", ".");
+  git("commit", "-qm", "Initial");
+  const remote = path.join(repo, "remote.git");
+  git("init", "--bare", "-q", remote);
+  git("remote", "add", "origin", remote);
+  git("push", "-u", "origin", "HEAD");
+  const initial = git("rev-parse", "HEAD");
+  fs.appendFileSync(other.path, "\nUser task edit\n");
+  fs.writeFileSync(path.join(repo, "unrelated.txt"), "staged note\n");
+  git("add", "unrelated.txt", other.path);
+  fs.appendFileSync(other.path, "\nUser unstaged edit\n");
+  const beforeIndex = git("diff", "--cached");
+  const beforeOther = fs.readFileSync(other.path, "utf8");
+  const settings = { OSL_READ_ONLY: "true", TASKS_DIR: root, BASE_PATH: "/osl",
+    CONFIG_DIR: path.join(repo, "absent-config"), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
+  const previous = Object.fromEntries(Object.keys(settings).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, settings);
+  delete require.cache[require.resolve("./server")];
+  const server = require("./server").listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    delete require.cache[require.resolve("./server")];
+  });
+  const base = `http://127.0.0.1:${server.address().port}/osl/_api`;
+  const post = (body) => fetch(`${base}/osl/capture`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  const valid = { title: "Web task", space: "work", state: "10-next" };
+  const before = JSON.stringify(osl.snapshot(root));
+  for (const body of [null, [], {}, { ...valid, title: " " }, { ...valid, title: "Two\nlines" },
+    { ...valid, title: 42 }, { ...valid, space: "unknown" }, { ...valid, state: "../outside" },
+    { ...valid, content: "raw overwrite" }, { ...valid, tags: ["other"] }]) {
+    assert.equal((await post(body)).status, 400);
+    assert.equal(JSON.stringify(osl.snapshot(root)), before);
+    assert.equal(git("rev-parse", "HEAD"), initial);
+  }
+  let response = await post(valid);
+  assert.equal(response.status, 201);
+  const task = await response.json();
+  assert.equal(task.reference, "osl:2");
+  assert.equal(task.path, path.join(root, "10-next", "2-web-task.md"));
+  assert.equal(osl.lookup(root, task.reference), task.path);
+  assert.match(fs.readFileSync(task.path, "utf8"), /\[tag:space::work\]/);
+  assert.deepEqual(git("diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").split("\n"),
+    ["tasks/.next-id", "tasks/10-next/2-web-task.md"]);
+  assert.equal(git("show", "HEAD:tasks/.next-id"), "3");
+  assert.equal(git("diff", "--cached"), beforeIndex);
+  assert.equal(fs.readFileSync(other.path, "utf8"), beforeOther);
+  assert.equal(git("--git-dir", remote, "rev-parse", "HEAD"), initial);
+  assert.equal((await (await fetch(`${base}/osl`)).json()).git.unpushed, 1);
+  const committed = git("rev-parse", "HEAD");
+  const hooks = path.join(repo, "reject-hooks");
+  fs.mkdirSync(hooks);
+  fs.writeFileSync(path.join(hooks, "pre-commit"), "#!/bin/sh\necho 'Rejected test commit' >&2\nexit 1\n", { mode: 0o755 });
+  git("config", "core.hooksPath", hooks);
+  response = await post({ ...valid, title: "Needs commit" });
+  assert.equal(response.status, 409);
+  const failure = await response.json();
+  assert.equal(failure.task.reference, "osl:3");
+  assert.match(failure.error, /Rejected test commit/);
+  assert.equal(osl.lookup(root, "3"), failure.task.path);
+  assert.equal(git("rev-parse", "HEAD"), committed);
+  assert.equal(fs.readFileSync(path.join(root, ".next-id"), "utf8"), "4\n");
+  assert.equal(osl.snapshot(root).tasks.length, 3);
+});
+
 test("OSL moves commit locally; explicit push updates Git status and preserves failures", async (t) => {
   const helper = process.env.OSL_HELPER;
   if (!helper) return t.skip("Set OSL_HELPER to test Web moves");

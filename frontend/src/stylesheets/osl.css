@@ -8,6 +8,7 @@
 .osl-lanes { min-height: 0; gap: 1.2rem; }
 .osl-lanes .lane { min-width: 260px; max-width: 320px; }
 .osl-lanes h2 { font-size: 1rem; margin: 0; }
+.osl-lanes .lane__header h2 { min-width: 0; overflow-wrap: anywhere; }
 .osl-lanes .lane__content { overflow-y: auto; }
 .osl-reference { display: block; margin-top: .4rem; opacity: .7; }
 .osl-card-error { display: block; color: var(--color-alt-1); font-size: .75rem; margin-top: .4rem; }
@@ -45,6 +46,15 @@ dialog.osl-detail { width: min(900px, 95vw); height: auto; max-height: 90dvh; bo
 .osl-body details[open] > summary { margin-bottom: .75rem; }
 .osl-body a { color: var(--color-accent); }
 .osl-detail footer { opacity: .7; font-size: .8rem; overflow-wrap: anywhere; }
+dialog.osl-capture { width: min(480px, 95vw); height: fit-content; }
+.osl-capture form { display: flex; flex-direction: column; gap: .75rem; }
+.osl-capture p { margin: 0; overflow-wrap: anywhere; }
+.osl-capture input[type="text"] { width: 100%; box-sizing: border-box; }
+.osl-capture fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+.osl-capture-spaces { display: flex; flex-wrap: wrap; gap: .5rem 1rem; margin-top: .5rem; }
+.osl-capture-spaces label { display: inline-flex; align-items: center; gap: .4rem; overflow-wrap: anywhere; }
+.osl-capture-spaces input { width: 1em; height: 1em; margin: 0; flex-shrink: 0; }
+.osl-capture-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .5rem; }
 @media (max-width: 600px) {
   .osl-header { padding: .75rem; gap: .5rem; }
   .osl-header input[aria-label="Поиск"] { width: 100%; }
