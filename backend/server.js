@@ -52,8 +52,9 @@ async function gitStatus() {
 
 async function completeMutation(ctx, args, input) {
   try {
-    await runHelper(args, input);
-    ctx.status = 204;
+    const result = await runHelper(args, input);
+    if (input !== undefined) ctx.body = { ...JSON.parse(result.stdout), git: await gitStatus() };
+    else ctx.status = 204;
   } catch (error) {
     ctx.status = typeof error.code === "number" ? 409 : 503;
     ctx.body = { error: error.stderr?.trim() || error.message };

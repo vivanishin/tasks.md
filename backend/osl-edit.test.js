@@ -64,7 +64,10 @@ test("Web editing preserves Markdown, scopes commits and rejects concurrent chan
   const firstTab = await read();
   const nextBody = `${firstTab.body}\nWeb edit\n`;
   let response = await save(firstTab, { title: "New title", body: nextBody });
-  assert.equal(response.status, 204, await response.text());
+  assert.equal(response.status, 200);
+  const saved = await response.json();
+  assert.equal(saved.revision, (await read()).revision);
+  assert.equal(saved.git.unpushed, 1);
   assert.equal(fs.readFileSync(original.path, "utf8"), fileBefore.replace("# Edit me", "# New title").replace(firstTab.body, nextBody));
   assert.deepEqual(git("diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").split("\n"), ["tasks/inbox/1-edit-me.md"]);
   assert.equal(git("diff", "--cached"), index);
@@ -72,7 +75,8 @@ test("Web editing preserves Markdown, scopes commits and rejects concurrent chan
   const head = git("rev-parse", "HEAD");
   const current = await read();
   response = await save(current);
-  assert.equal(response.status, 204);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).revision, current.revision);
   assert.equal(git("rev-parse", "HEAD"), head, "unchanged card creates no commit");
   response = await save(firstTab, { body: "Stale tab" });
   assert.equal(response.status, 409);

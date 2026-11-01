@@ -35,15 +35,19 @@ Moves serialize via `.move-lock` and refuse to overwrite pending order edits.
 Every read scans the canonical files,
 including archive, with the same parser as the capture/validation CLI. Invalid
 cards remain visible, and duplicate IDs cannot be resolved arbitrarily.
-The card dialog offers Edit, Save and Cancel. Editing uses Stacks Editor's
-Markdown view to preserve comments, folded sections and literal OSL links.
+The card dialog offers Edit and Done. Changes autosave after 1.5 seconds
+without input; Done also flushes pending changes. Editing uses Stacks
+Editor's Markdown view to preserve comments, folded sections and literal OSL links.
 Saving uses the same PATCH endpoint with `title`, `body` and the snapshot's
 `revision`; `osl.sh edit` checks that the path and content still match,
 refuses pending edits to that card, and commits only its file. Metadata above
-the title is retained verbatim. Edits share `.move-lock` with moves and Push.
-Conflicts and failed requests retain the browser draft; cancelling reloads
-the current file. If committing fails after the write, the file remains for
-an explicit manual commit. Push remains separate.
+the title is retained verbatim. The response confirms the written revision
+and Git status. One request runs at a time; further input replaces the
+waiting text and remains editable. Repeated saves use the helper's commit
+batching. Edits share `.move-lock` with moves and Push. Conflicts and failed
+requests pause autosave and retain the draft; Retry resumes it. Closing
+flushes pending edits and asks before discarding a failed save. If committing
+fails after the write, the file remains for a manual commit. Push remains separate.
 Column order/names, Spaces, capture defaults and the common archive come from
 `/tasks/.board.json`; no workflow names are hardcoded. Capture does not require
 creation/modification timestamps. Emacs Lisp lives in `~/.emacs.d/lisp/osl.el`

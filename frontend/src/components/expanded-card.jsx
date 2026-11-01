@@ -27,7 +27,6 @@ import { addTagToContent, removeTagFromContent, setDueDateInContent, getDueDateF
  * @param {string} props.dialogLabel Accessible dialog label
  * @param {boolean} props.readOnly Render the rich-text editor without editing controls
  * @param {boolean} props.sourceMode Edit Markdown without a rich-text round trip
- * @param {Function} props.onEditorReady Receive the editor for explicit saving
  * @param {Object} props.editorOptions Additional Stacks Editor options
  * @param {Element} props.metadataSlot Optional card metadata and actions
  * @param {Element} props.footerSlot Optional card footer
@@ -285,9 +284,12 @@ function ExpandedCard(props) {
       // HTML <pre> parsing strips the first newline; insert source as text instead.
       const view = newEditor.editorView;
       view.dispatch(view.state.tr.insertText(props.content || "", 1).setMeta("addToHistory", false));
+      view.setProps({ dispatchTransaction(transaction) {
+        view.updateState(view.state.apply(transaction));
+        if (transaction.docChanged) props.onContentChange?.(newEditor.content);
+      } });
     }
     setEditor(newEditor);
-    props.onEditorReady?.(newEditor);
     if (props.readOnly) {
       newEditor.disable();
       disableCheckboxes();

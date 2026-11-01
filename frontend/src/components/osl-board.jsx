@@ -121,9 +121,10 @@ export default function OslBoard() {
   const [taskMoveError, setTaskMoveError] = createSignal("");
   const [editing, setEditing] = createSignal(null);
   const [draftTitle, setDraftTitle] = createSignal("");
+  const [draftBody, setDraftBody] = createSignal("");
   const [saving, setSaving] = createSignal(false);
   const [editError, setEditError] = createSignal("");
-  let editingEditor;
+  let saveTimer, savePromise;
   const [writeError, setWriteError] = createSignal("");
   const [search, setSearch] = createSignal("");
   const [space, setSpace] = createSignal("");
@@ -357,14 +358,15 @@ export default function OslBoard() {
     return failureMessage;
   }
 
-  function readHash() {
+  async function readHash() {
     let next;
     try { next = decodeURIComponent(window.location.hash.slice(1)); }
     catch { next = "invalid"; }
     if (next === reference()) return;
-    if (editing() && !canLeaveEdit()) {
+    if (editing() && (saving() || hasDraftChanges())) {
       window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}#${reference()}`);
-      return;
+      if (!await finishEdit()) return;
+      window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}#${next}`);
     }
     setEditing(null);
     setEditError("");
@@ -373,45 +375,58 @@ export default function OslBoard() {
     setTaskMoveError("");
   }
   function hasDraftChanges() {
-    return editing() && (draftTitle() !== editing().title || editingEditor?.content !== editing().body);
+    return editing() && (draftTitle().trim() !== editing().title || draftBody() !== editing().body);
   }
-  function canLeaveEdit() {
-    return !saving() && (!hasDraftChanges() || window.confirm("Закрыть карточку без сохранения правок?"));
-  }
-  function close() {
-    if (!canLeaveEdit()) return;
-    setEditing(null);
+  async function close() {
+    if (!await finishEdit()) return;
     window.location.hash = "";
+    await refresh();
   }
   function startEdit(task) {
     if (working() || task.errors.length) return;
     setDraftTitle(task.title);
+    setDraftBody(task.body);
     setEditError("");
     setEditing({ ...task });
   }
-  async function cancelEdit() {
-    if (saving()) return;
+  async function finishEdit() {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    while (saving() || (hasDraftChanges() && !editError() && draftTitle().trim())) await saveEdit();
+    if (hasDraftChanges() && !window.confirm("Автосохранение не завершено. Закрыть без последних правок?")) return false;
     setEditing(null);
     setEditError("");
-    await refresh();
+    return true;
   }
-  async function saveEdit() {
-    if (working() || !editing() || !editingEditor || !draftTitle().trim()) return;
+  function scheduleSave() {
+    clearTimeout(saveTimer);
+    if (!editError()) saveTimer = setTimeout(saveEdit, 1500);
+  }
+  function saveEdit() {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    if (savePromise) return savePromise;
+    if (!editing() || editError() || !hasDraftChanges() || !draftTitle().trim()) return;
     const task = editing();
-    const body = editingEditor.content;
+    const content = { title: draftTitle().trim(), body: draftBody() };
     setSaving(true);
-    setEditError("");
-    editingEditor.disable();
-    try {
-      await writeRequest(`/resource/${task.path.split("/").map(encodeURIComponent).join("/")}`, "PATCH", {
-        revision: task.revision, title: draftTitle(), body,
-      });
-      setEditing(null);
-    } catch (failure) {
-      setEditError(`Не удалось завершить сохранение: ${failure.message}. Правки остаются в редакторе.`);
-      editingEditor.enable();
-    } finally { setSaving(false); }
-    if (!editing()) await refresh();
+    savePromise = writeRequest(`/resource/${task.path.split("/").map(encodeURIComponent).join("/")}`, "PATCH", {
+      revision: task.revision, ...content,
+    }).then((result) => {
+      if (!/^[a-f0-9]{64}$/.test(result?.revision)) throw new Error("Нет подтверждения версии файла");
+      const saved = { ...task, ...content, revision: result.revision };
+      setEditing(saved);
+      setData((previous) => ({ ...previous, git: result.git,
+        tasks: previous.tasks.map((item) => item.path === task.path ? { ...item, ...saved } : item),
+      }));
+    }).catch((failure) => {
+      setEditError(`Автосохранение остановлено: ${failure.message}. Правки остаются в редакторе.`);
+    }).finally(() => {
+      savePromise = null;
+      setSaving(false);
+      if (!saveTimer && !editError() && hasDraftChanges()) saveEdit();
+    });
+    return savePromise;
   }
   function beforeUnload(event) {
     if (saving() || hasDraftChanges()) { event.preventDefault(); event.returnValue = ""; }
@@ -439,6 +454,7 @@ export default function OslBoard() {
     const interval = setInterval(() => { if (!document.hidden) refresh(); }, 30000);
     onCleanup(() => {
       clearInterval(interval);
+      clearTimeout(saveTimer);
       window.removeEventListener("hashchange", readHash);
       window.removeEventListener("popstate", readLocation);
       window.removeEventListener("focus", refresh);
@@ -550,7 +566,7 @@ export default function OslBoard() {
       const task = () => tasks().find((task) => `osl:${task.id}` === taskReference);
       return <Show when={editing() ? "edit" : "read"} keyed>{(mode) => <ExpandedCard
         readOnly={mode === "read"} sourceMode={mode === "edit"} disableImageUpload
-        onEditorReady={(editor) => { editingEditor = editor; }}
+        onContentChange={(body) => { setDraftBody(body); scheduleSave(); }}
         dialogLabel="Задача OSL" name={task().title} content={mode === "edit" ? editing()?.body ?? task().body : task().body} onClose={close} t={t}
         tags={[]} tagsOptions={[]}
         editorOptions={{ editorPlugins: [oslEditorPlugin], parserFeatures: { html: false, tagLinks: false } }}
@@ -564,14 +580,17 @@ export default function OslBoard() {
         <Show when={task().errors.length}><p class="osl-alert">{task().errors.join("; ")}</p></Show>
         <Show when={taskMoveError()}><p class="osl-alert osl-task-move-error" role="alert" style={{ "white-space": "pre-wrap" }}>{taskMoveError()}</p></Show>
         <Show when={mode === "edit"}>
-          <label>Название<input aria-label="Название карточки" value={draftTitle()} disabled={saving()}
-            onInput={(event) => setDraftTitle(event.target.value)} /></label>
+          <label>Название<input aria-label="Название карточки" value={draftTitle()}
+            onInput={(event) => { setDraftTitle(event.target.value); scheduleSave(); }} /></label>
+          <p class="osl-autosave-status" role="status" aria-live="polite">{editError() ? "Автосохранение остановлено"
+            : !draftTitle().trim() ? "Введите название карточки" : saving() ? "Сохраняется…"
+            : hasDraftChanges() ? "Изменения ожидают сохранения…" : "Сохранено"}</p>
         </Show>
         <Show when={editError()}><p class="osl-alert" role="alert" style={{ "white-space": "pre-wrap" }}>{editError()}</p></Show>
         <div class="osl-copy">
           <Show when={mode === "read"} fallback={<>
-            <button type="button" onClick={saveEdit} disabled={working() || !draftTitle().trim()}>{saving() ? "Сохранение…" : "Сохранить"}</button>
-            <button type="button" onClick={cancelEdit} disabled={saving()}>Отмена</button>
+            <button type="button" onClick={async () => { if (await finishEdit()) await refresh(); }}>Готово</button>
+            <Show when={editError()}><button type="button" onClick={() => { setEditError(""); saveEdit(); }}>Повторить</button></Show>
           </>}>
             <button type="button" onClick={() => startEdit(task())} disabled={working() || task().errors.length > 0}>Редактировать</button>
           </Show>

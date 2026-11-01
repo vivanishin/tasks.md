@@ -274,7 +274,7 @@ function edit(root, reference, { path: expectedPath, revision, title, body }) {
   if (typeof title !== "string" || !title.trim() || /[\r\n]/.test(title) || typeof body !== "string") {
     throw new Error("Expected a one-line title and Markdown body");
   }
-  if (title === task.title && body === task.body) return;
+  if (title === task.title && body === task.body) return { revision: task.revision };
   const heading = /^# (.+)\r?$/m.exec(content);
   const newline = heading[0].endsWith("\r") ? "\r\n" : "\n";
   const updated = `${content.slice(0, heading.index)}# ${title.trim()}${newline}${body}`;
@@ -288,6 +288,7 @@ function edit(root, reference, { path: expectedPath, revision, title, body }) {
   } finally {
     if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
   }
+  return { revision: parsed.revision };
 }
 
 function init(root) {
@@ -350,7 +351,9 @@ function main(args) {
   if (!root) throw new Error("Specify --root TASKS_DIR");
   root = path.resolve(root);
   const command = args.shift();
-  if (command === "edit" && args.length === 1) return edit(root, args[0], JSON.parse(fs.readFileSync(0, "utf8")));
+  if (command === "edit" && args.length === 1) {
+    return process.stdout.write(`${JSON.stringify(edit(root, args[0], JSON.parse(fs.readFileSync(0, "utf8"))))}\n`);
+  }
   if (command === "config" && !args.length) return process.stdout.write(`${JSON.stringify(readConfig(root))}\n`);
   if (command === "init" && !args.length) return init(root);
   if (command === "validate" && !args.length) {
