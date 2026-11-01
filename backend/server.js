@@ -253,14 +253,20 @@ async function updateResource(ctx) {
     const current = osl.snapshot(TASKS_DIR);
     const task = current.tasks.find((task) => task.path === oldPath);
     const parts = typeof body?.newPath === "string" ? body.newPath.replace(/^\//, "").split("/") : [];
-    if (!ctx.is("application/json") || Object.keys(body || {}).some((key) => key !== "newPath")
+    if (!ctx.is("application/json") || Object.keys(body || {}).some((key) => !["newPath", "before"].includes(key))
+        || (Object.hasOwn(body || {}, "before") && body.before !== null
+          && (typeof body.before !== "string" || !/^[1-9][0-9]*$/.test(body.before)))
         || !task?.id || parts.length !== 2 || parts[1] !== oldPath.split("/").at(-1)
         || !current.states.includes(parts[0])) {
       ctx.status = 400;
       ctx.body = { error: "OSL only supports moving an existing task between configured columns" };
       return;
     }
-    await completeMutation(ctx, ["move", `osl:${task.id}`, "--to", parts[0]]);
+    const args = ["move", `osl:${task.id}`, "--to", parts[0]];
+    if (Object.hasOwn(body, "before")) {
+      args.push(...(body.before === null ? ["--last"] : ["--before", body.before]));
+    }
+    await completeMutation(ctx, args);
     return;
   }
   const newPath = decodeURIComponent(ctx.request.body.newPath || oldPath).replaceAll(

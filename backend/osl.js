@@ -133,6 +133,22 @@ function parseTask(content, relativePath, config) {
   };
 }
 
+function readOrder(root, config) {
+  const filename = path.join(root, ".order.json");
+  let stat;
+  try { stat = fs.lstatSync(filename); }
+  catch (error) { if (error.code === "ENOENT") return {}; throw error; }
+  if (!stat.isFile()) throw new Error(".order.json must be a regular file");
+  const order = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(fs.readFileSync(filename)));
+  if (!order || Array.isArray(order) || typeof order !== "object") throw new Error("Expected a column-to-IDs object");
+  for (const [column, ids] of Object.entries(order)) {
+    if (!config?.columns.includes(column) || !Array.isArray(ids)
+        || ids.some((id) => typeof id !== "string" || !ID.test(id))
+        || new Set(ids).size !== ids.length) throw new Error("Expected configured columns with distinct positive string IDs");
+  }
+  return order;
+}
+
 function snapshot(root) {
   const tasks = [];
   const issues = [];
@@ -193,6 +209,14 @@ function snapshot(root) {
     allocatorValid = false;
     issues.push({ path: ".next-id", message: "Missing, invalid, or regressed allocator; restore its high-water mark from Git" });
   }
+  try {
+    const order = readOrder(root, config);
+    const ranks = new Map(Object.entries(order).map(([column, ids]) => [column, new Map(ids.map((id, index) => [id, index]))]));
+    tasks.sort((a, b) => a.state.localeCompare(b.state)
+      || (ranks.get(a.state)?.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (ranks.get(b.state)?.get(b.id) ?? Number.MAX_SAFE_INTEGER));
+  } catch (error) {
+    issues.push({ path: ".order.json", message: `Invalid card order: ${error.message}` });
+  }
   const allocationSafe = Boolean(config) && allocatorValid
     && tasks.every((task) => task.id && ids.get(task.id).length === 1)
     && !issues.some((issue) => /^(Cannot read|Symbolic links)/.test(issue.message));
@@ -200,6 +224,31 @@ function snapshot(root) {
     defaultSpace: config?.defaultSpace || null,
     webDefaults: config?.webDefaults || null,
     archiveState: config?.archiveColumn || null, nextId, allocationSafe, tasks, issues };
+}
+
+function planMove(root, reference, { state, before }) {
+  const current = snapshot(root);
+  if (current.issues.length) throw new Error("Run validate and resolve task-store issues before moving cards");
+  const match = /^(?:osl:)?([1-9][0-9]*)$/.exec(reference);
+  const task = current.tasks.find((task) => task.id === match?.[1]);
+  if (!task) throw new Error(`Unknown or invalid reference ${reference}`);
+  if (!current.states.includes(state)) throw new Error("Unknown target column");
+  const destination = current.tasks.filter((item) => item.state === state && item.id !== task.id).map((item) => item.id);
+  if (before !== undefined && before !== null && !destination.includes(before)) {
+    throw new Error("The preceding position must name another card in the target column; refresh the board");
+  }
+  const order = Object.assign(Object.create(null), readOrder(root, readConfig(root)));
+  const result = { source: task.path, target: `${state}/${path.basename(task.path)}`, order: null };
+  if (task.state === state && before === undefined) return result;
+  if (before === undefined && !fs.existsSync(path.join(root, ".order.json"))) return result;
+  destination.splice(before == null ? destination.length : destination.indexOf(before), 0, task.id);
+  const previous = current.tasks.filter((item) => item.state === state).map((item) => item.id);
+  if (task.state === state && JSON.stringify(destination) === JSON.stringify(previous)) return result;
+  if (task.state !== state) order[task.state] = current.tasks
+    .filter((item) => item.state === task.state && item.id !== task.id).map((item) => item.id);
+  order[state] = destination;
+  result.order = order;
+  return result;
 }
 
 function lookup(root, reference) {
@@ -281,6 +330,20 @@ function main(args) {
   }
   if (command === "lookup" && args.length === 1) return process.stdout.write(`${lookup(root, args[0])}\n`);
   if (command === "snapshot" && !args.length) return process.stdout.write(`${JSON.stringify(snapshot(root))}\n`);
+  if (command === "plan-move") {
+    const reference = args.shift();
+    const options = {};
+    while (args.length) {
+      const key = args.shift();
+      if (key === "--last" && options.before === undefined) { options.before = null; continue; }
+      const value = args.shift();
+      if (!value || !["--to", "--before"].includes(key)) throw new Error(`Invalid move option ${key}`);
+      if (key === "--to" && options.state === undefined) options.state = value;
+      else if (key === "--before" && options.before === undefined && /^(?:osl:)?[1-9][0-9]*$/.test(value)) options.before = value.replace(/^osl:/, "");
+      else throw new Error(`Invalid or repeated move option ${key}`);
+    }
+    return process.stdout.write(`${JSON.stringify(planMove(root, reference, options))}\n`);
+  }
   if (command === "capture") {
     const options = { tags: [] };
     while (args.length) {
@@ -295,7 +358,7 @@ function main(args) {
   throw new Error("Usage: osl.js --root DIR init|config|validate|snapshot|lookup NUMBER_OR_REFERENCE|capture --title TITLE [--space SPACE] [--tag TAG] [--state STATE] [--body TEXT]");
 }
 
-module.exports = { readConfig, parseTask, snapshot, lookup, init, capture };
+module.exports = { readConfig, readOrder, parseTask, snapshot, planMove, lookup, init, capture };
 if (require.main === module) {
   try { main(process.argv.slice(2)); }
   catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; }

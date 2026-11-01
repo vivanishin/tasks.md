@@ -306,12 +306,16 @@ export default function OslBoard() {
     const previous = data();
     const task = previous.tasks.find((task) => `card-${task.path}` === change.id);
     const column = decodeURIComponent(change.to.slice("lane-content-".length));
-    if (!task?.id || task.state === column || working()) {
+    const columnTasks = visible().filter((item) => item.state === column);
+    if (!task?.id || task.errors.length || !previous.states.includes(column) || working()
+        || (task.state === column && columnTasks.indexOf(task) === change.index)) {
       // Replace cards to reset upstream drag-and-drop's DOM transforms.
       setData({ ...previous, tasks: previous.tasks.map((task) => ({ ...task })) });
       return;
     }
-    await moveTask(task, column);
+    const destination = isCollapsed(column) ? [] : columnTasks.filter((item) => item.id !== task.id);
+    const before = destination[Math.max(0, change.index)]?.id ?? null;
+    await moveTask(task, column, before);
   }
 
   async function moveSelectedTask(task, column) {
@@ -321,7 +325,7 @@ export default function OslBoard() {
     if (reference() === `osl:${task.id}`) setTaskMoveError(failure);
   }
 
-  async function moveTask(task, column) {
+  async function moveTask(task, column, before) {
     const previous = data();
     const newPath = `${column}/${task.path.split("/").at(-1)}`;
     let failureMessage = "";
@@ -330,7 +334,9 @@ export default function OslBoard() {
     setData({ ...previous, tasks: previous.tasks.map((item) => item === task
       ? { ...task, state: column, path: newPath } : item) });
     try {
-      await writeRequest(`/resource/${task.path.split("/").map(encodeURIComponent).join("/")}`, "PATCH", { newPath });
+      await writeRequest(`/resource/${task.path.split("/").map(encodeURIComponent).join("/")}`, "PATCH", {
+        newPath, ...(before !== undefined ? { before } : {}),
+      });
       expandColumn(column);
     } catch (failure) {
       setData(previous);

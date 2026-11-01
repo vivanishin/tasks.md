@@ -497,3 +497,92 @@ test("OSL moves commit locally; explicit push updates Git status and preserves f
   assert.deepEqual(await status(), { unpushed: 0 });
   assert.equal(git("diff", "--cached"), beforeIndex);
 });
+
+test("card order survives renames, ignores stale IDs and appends unlisted cards", (t) => {
+  const root = fixture(t);
+  const first = osl.capture(root, { title: "First" });
+  const second = osl.capture(root, { title: "Second", space: "work" });
+  const third = osl.capture(root, { title: "Third" });
+  fs.writeFileSync(path.join(root, ".order.json"), JSON.stringify({ "00-inbox": [second.id, "999", first.id] }));
+  fs.renameSync(first.path, path.join(root, "00-inbox/z-renamed.md"));
+  assert.deepEqual(osl.snapshot(root).tasks.map((task) => task.id), [second.id, first.id, third.id]);
+  assert.equal(osl.snapshot(root).issues.length, 0);
+  const plan = osl.planMove(root, first.reference, { state: "00-inbox", before: second.id });
+  assert.deepEqual(plan.order["00-inbox"], [first.id, second.id, third.id]);
+  assert.throws(() => osl.planMove(root, first.reference, { state: "10-next", before: second.id }), /refresh/);
+  assert.throws(() => osl.planMove(root, first.reference, { state: "00-inbox", before: first.id }), /refresh/);
+});
+
+test("invalid order is visible without hiding tasks; symlinks are rejected", (t) => {
+  const root = fixture(t);
+  osl.capture(root, { title: "First" });
+  const filename = path.join(root, ".order.json");
+  for (const content of ["not JSON", "[]", "null", '{"unknown": []}', '{"00-inbox": [1]}',
+    '{"00-inbox": ["01"]}', '{"00-inbox": ["1", "1"]}']) {
+    fs.writeFileSync(filename, content);
+    const current = osl.snapshot(root);
+    assert.equal(current.tasks.length, 1);
+    assert.ok(current.issues.some((issue) => issue.path === ".order.json"));
+    assert.throws(() => osl.planMove(root, "1", { state: "10-next" }), /validate/);
+  }
+  fs.unlinkSync(filename);
+  fs.symlinkSync(path.join(root, ".board.json"), filename);
+  assert.throws(() => osl.readOrder(root, board), /regular file/);
+});
+
+test("HTTP reorder validates positions and commits one scoped change", async (t) => {
+  if (!process.env.OSL_HELPER) return t.skip("Set OSL_HELPER to test Web order");
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "osl-order-http-"));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
+  const git = (...args) => {
+    const result = spawnSync("git", ["-C", repo, ...args], { encoding: "utf8", env });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  const root = path.join(repo, "tasks");
+  fs.mkdirSync(root);
+  initialize(root);
+  const first = osl.capture(root, { title: "First" });
+  const second = osl.capture(root, { title: "Second", space: "work" });
+  git("init", "-q"); git("config", "user.name", "Test"); git("config", "user.email", "test@example.invalid");
+  git("add", "."); git("commit", "-qm", "Initial");
+  const initial = git("rev-parse", "HEAD");
+  const settings = { OSL_READ_ONLY: "true", TASKS_DIR: root, BASE_PATH: "/osl",
+    GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
+  const previous = Object.fromEntries(Object.keys(settings).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, settings);
+  delete require.cache[require.resolve("./server")];
+  const server = require("./server").listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    delete require.cache[require.resolve("./server")];
+  });
+  const base = `http://127.0.0.1:${server.address().port}/osl/_api`;
+  const source = path.relative(root, second.path);
+  const patch = (body) => fetch(`${base}/resource/${source}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  for (const before of [1, false, "01", "osl:1", [], {}]) {
+    assert.equal((await patch({ newPath: source, before })).status, 400);
+    assert.equal(git("rev-parse", "HEAD"), initial);
+  }
+  for (const before of ["999", second.id]) {
+    assert.equal((await patch({ newPath: source, before })).status, 409);
+    assert.equal(git("rev-parse", "HEAD"), initial);
+  }
+  assert.equal((await patch({ newPath: source, before: first.id })).status, 204);
+  assert.deepEqual(osl.snapshot(root).tasks.map((task) => task.id), [second.id, first.id]);
+  assert.equal(git("show", "--format=", "--name-only", "HEAD"), "tasks/.order.json");
+  const head = git("rev-parse", "HEAD");
+  assert.equal((await patch({ newPath: source, before: first.id })).status, 204);
+  assert.equal(git("rev-parse", "HEAD"), head);
+  assert.equal((await patch({ newPath: source, before: null })).status, 204);
+  assert.deepEqual(osl.snapshot(root).tasks.map((task) => task.id), [first.id, second.id]);
+  const view = await (await fetch(`${base}/osl`)).json();
+  assert.deepEqual(view.tasks.map((task) => task.id), [first.id, second.id]);
+});

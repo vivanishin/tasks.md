@@ -11,10 +11,12 @@ repository.
 
 The OSL frontend is selected at build time with `VITE_OSL_READ_ONLY=true`.
 The backend starts with `OSL_READ_ONLY=true`. This restricted mode also permits
-the upstream `PATCH /_api/resource/COLUMN/FILE.md` endpoint with only `newPath`
-to move a task between configured columns while retaining its filename.
+the upstream `PATCH /_api/resource/COLUMN/FILE.md` endpoint with `newPath`
+and optional `before` (a string ID, or `null` for the end) to move or reorder
+a task while retaining its filename.
 `OSL_HELPER` selects the notes helper; it runs `move osl:ID --to COLUMN`
-without a shell. Success means the local commit completed. A separate Push
+with optional `--before ID` or `--last`, without a shell. Success means the
+local commit completed. A separate Push
 button calls `POST /_api/osl/push` with `{}` to run `osl.sh push`, publishing
 existing commits without staging or committing pending edits.
 `GET /_api/osl` includes `git.unpushed`, the outgoing commit count against the
@@ -24,7 +26,12 @@ and an error; it does not hide the task snapshot. Failed push retains local
 commits and the indicator. Errors remain visible across refreshes.
 The Web board reuses upstream drag-and-drop for mouse and long-press moves.
 It refreshes actual files and Git status after each attempt. Dropping within
-the same column preserves the current order.
+or between columns saves the chosen position in the optional task-store
+`.order.json`, mapping columns to arrays of string IDs. Listed cards come
+first; unlisted cards follow in filename order. Stale IDs are ignored and
+invalid order data is reported. Order is shared by all Spaces; hidden cards
+retain their relative order. A drop at the same visible position is a no-op.
+Moves serialize via `.move-lock` and refuse to overwrite pending order edits.
 Every read scans the canonical files,
 including archive, with the same parser as the capture/validation CLI. Invalid
 cards remain visible, and duplicate IDs cannot be resolved arbitrarily.

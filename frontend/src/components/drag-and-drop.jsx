@@ -306,7 +306,9 @@ function Container(props) {
     let lastPosition = firstItemPosition;
     let prevItemHeight = 0;
     const newPositions = sortedItemsIds.map((id, i) => {
-      const item = items().find((itemToFind) => itemToFind.id === id);
+      const item = id === dragAndDropTarget().originalElement?.id
+        ? dragAndDropTarget().originalElement
+        : items().find((itemToFind) => itemToFind.id === id);
       const itemLength = item?.getBoundingClientRect()[lengthProperty()] || 0;
       if (i === 0) {
         prevItemHeight = itemLength;
@@ -329,17 +331,19 @@ function Container(props) {
   })
 
   function getItemLength(id) {
-    const item = items().find((item) => item.id === id);
+    const item = id === dragAndDropTarget().originalElement?.id
+      ? dragAndDropTarget().originalElement
+      : items().find((item) => item.id === id);
     const lengthInPx = getComputedStyle(item)[lengthProperty()];
     const length = Number(lengthInPx.substring(0, lengthInPx.length - 2));
     return length;
   }
 
   function sortItems(direction) {
-    if (!sortedItemsIds.every(id => items().some(item => item.id === id))) {
+    const targetId = dragAndDropTarget().originalElement.id;
+    if (!sortedItemsIds.every(id => id === targetId || items().some(item => item.id === id))) {
       return;
     }
-    const targetId = dragAndDropTarget().originalElement.id;
     const targetPosition =
       dragAndDropTarget()[positionProperty()] + containerRef[scrollProperty()];
 
@@ -520,11 +524,10 @@ function Container(props) {
       const newSortedItemsIds = items().map((item) => item.id);
       setSortedItemsIds(newSortedItemsIds);
     }
-    if (
-      !sortedItemsIds.some(
-        (id) => id === dragAndDropTarget().originalElement.id
-      )
-    ) {
+    const entering = !sortedItemsIds.some(
+      (id) => id === dragAndDropTarget().originalElement.id
+    );
+    if (entering) {
       const targetId = dragAndDropTarget().originalElement.id;
       setSortedItemsIds(sortedItemsIds.length, targetId);
     }
@@ -535,7 +538,8 @@ function Container(props) {
           JSON.parse(prev)[positionProperty()]
       );
     }
-    sortItems(direction || -1);
+    // New arrivals start at the end, regardless of pointer direction.
+    sortItems(entering ? -1 : direction || -1);
     return JSON.stringify(dragAndDropTarget());
   });
 
