@@ -62,22 +62,6 @@ export function oslEditorPlugin() {
               token.attrSet("href", `#${token.attrGet("href")}`);
           }
         });
-        // The fork's checkbox pass misses nested lists and leaves markers in inline text.
-        markdown.core.ruler.after("checkbox", "osl_checklists", (state) => {
-          for (let index = 0; index < state.tokens.length; index++) {
-            const token = state.tokens[index];
-            if (token.type !== "list_item_open") continue;
-            const inline = state.tokens[index + 2];
-            const match = inline?.type === "inline" && /^\[([ xX])\] /.exec(inline.content);
-            token.attrSet("text", null);
-            token.attrSet("checkbox", match ? "true" : null);
-            token.attrSet("checked", match && match[1] !== " " ? "true" : null);
-            if (match) {
-              inline.content = inline.content.slice(4);
-              if (inline.children[0]?.type === "text") inline.children[0].content = inline.children[0].content.slice(4);
-            }
-          }
-        });
       },
     },
   };
