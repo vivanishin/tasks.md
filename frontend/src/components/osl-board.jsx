@@ -490,7 +490,8 @@ export default function OslBoard() {
     <Show when={selected().length === 1 && reference()} keyed>{(taskReference) => {
       const task = () => tasks().find((task) => `osl:${task.id}` === taskReference);
       return <ExpandedCard readOnly dialogLabel="Задача OSL" name={task().title} content={task().body} onClose={close} t={t}
-        editorPlugins={[oslEditorPlugin]} parserFeatures={{ html: false, tagLinks: false }}
+        tags={[]} tagsOptions={[]}
+        editorOptions={{ editorPlugins: [oslEditorPlugin], parserFeatures: { html: false, tagLinks: false } }}
         metadataSlot={<>
         <p class="osl-task-meta">{`osl:${task().id} · `}<TaskColumnMenu task={task()} columns={data().states}
           archiveState={data().archiveState} disabled={working() || task().errors.length > 0}

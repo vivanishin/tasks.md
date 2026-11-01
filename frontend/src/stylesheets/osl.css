@@ -63,7 +63,6 @@ dialog.osl-capture { width: min(480px, 95vw); height: fit-content; }
 .dialog--read-only #editor-container .s-textarea[readonly] { cursor: auto; }
 .dialog--read-only #editor-container .js-plugin-container { display: none; }
 .dialog--read-only #editor-container .ProseMirror { color: var(--color-foreground); background: transparent; padding: .75rem 0 1.5rem; min-height: 0; }
-.dialog--read-only #editor-container .ProseMirror a { color: var(--color-accent); }
 .dialog--read-only #editor-container .ProseMirror pre { background: var(--color-background-1); }
 .dialog--read-only #editor-container .ProseMirror details { margin: 1rem 0; padding: .75rem 1rem; border: 1px solid var(--color-background-4); border-radius: 6px; }
 .dialog--read-only #editor-container .ProseMirror summary { cursor: pointer; font-weight: 600; }

@@ -3,6 +3,7 @@ import {
   createSignal,
   onMount,
   createMemo,
+  on,
   onCleanup,
   For,
   Show,
@@ -24,8 +25,7 @@ import { addTagToContent, removeTagFromContent, setDueDateInContent, getDueDateF
  * @param {Object} props
  * @param {string} props.dialogLabel Accessible dialog label
  * @param {boolean} props.readOnly Render the rich-text editor without editing controls
- * @param {Function[]} props.editorPlugins Stacks Editor extensions
- * @param {Object} props.parserFeatures Stacks Editor parser features
+ * @param {Object} props.editorOptions Additional Stacks Editor options
  * @param {Element} props.metadataSlot Optional card metadata and actions
  * @param {Element} props.footerSlot Optional card footer
  * @param {string} props.name Card name
@@ -70,7 +70,6 @@ function ExpandedCard(props) {
   let backdropRef;
   let tagsInputRef;
   let editorContainerRef;
-  let renderedContent;
 
   function handleTagRenameChange(newValue) {
     setNewTagName(newValue);
@@ -254,9 +253,9 @@ function ExpandedCard(props) {
 
   createEffect(() => {
     setAvailableTags(
-      (props.tagsOptions || []).filter(
+      props.tagsOptions.filter(
         (tagOption) =>
-          !(props.tags || []).some((tag) => tag.name === tagOption.name) &&
+          !props.tags.some((tag) => tag.name === tagOption.name) &&
           tagOption.name.toLowerCase().includes(newTagName()?.toLowerCase())
       )
     );
@@ -275,11 +274,9 @@ function ExpandedCard(props) {
         targetClassList: editorClasses,
         editorHelpLink: "https://github.com/BaldissaraMatheus/Tasks.md/issues",
         imageUpload: { handler: uploadImage },
-        editorPlugins: props.editorPlugins || [],
-        ...(props.parserFeatures ? { parserFeatures: props.parserFeatures } : {}),
+        ...props.editorOptions,
       }
     );
-    renderedContent = props.content || "";
     setEditor(newEditor);
     if (props.readOnly) {
       newEditor.disable();
@@ -299,15 +296,12 @@ function ExpandedCard(props) {
     editorContainerRef.querySelectorAll('input[type="checkbox"]').forEach((input) => { input.disabled = true; });
   }
 
-  createEffect(() => {
-    const content = props.content || "";
-    if (!props.readOnly || !editor()) return;
-    if (renderedContent !== content) {
-      renderedContent = content;
+  createEffect(on(createMemo(() => props.content || ""), (content) => {
+    if (props.readOnly && editor()) {
       editor().content = content;
       disableCheckboxes();
     }
-  });
+  }, { defer: true }));
 
   function handleClickEditorMode(e) {
     setMode(e.currentTarget.title);
