@@ -1,13 +1,16 @@
-import { createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from "solid-js";
+import { createSignal, createMemo, createEffect, onMount, onCleanup, lazy, For, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { Card } from "./card";
+import { oslEditorPlugin } from "../osl-editor.mjs";
 import { DragAndDrop } from "./drag-and-drop";
 import { api } from "../api";
 import { useI18n } from "../i18n";
-import { renderMarkdown, visibleTags, markdownLink, taskFilePath } from "../osl-content.mjs";
+import { visibleTags, markdownLink, taskFilePath } from "../osl-content.mjs";
 import { defaultSpaceFor } from "../osl-default-space.mjs";
 import "../stylesheets/index.css";
 import "../stylesheets/osl.css";
+
+const ExpandedCard = lazy(() => import("./expanded-card"));
 
 function TaskColumnMenu(props) {
   const [open, setOpen] = createSignal(false);
@@ -486,10 +489,9 @@ export default function OslBoard() {
     </Show>
     <Show when={selected().length === 1 && reference()} keyed>{(taskReference) => {
       const task = () => tasks().find((task) => `osl:${task.id}` === taskReference);
-      return <Portal><dialog class="osl-detail" aria-label="Задача OSL"
-        ref={(element) => queueMicrotask(() => { if (element.isConnected && !element.open) element.showModal(); })}
-        onCancel={(event) => { event.preventDefault(); close(); }}>
-        <header><h2>{task().title}</h2><button type="button" onClick={close}>Закрыть</button></header>
+      return <ExpandedCard readOnly dialogLabel="Задача OSL" name={task().title} content={task().body} onClose={close} t={t}
+        editorPlugins={[oslEditorPlugin]} parserFeatures={{ html: false, tagLinks: false }}
+        metadataSlot={<>
         <p class="osl-task-meta">{`osl:${task().id} · `}<TaskColumnMenu task={task()} columns={data().states}
           archiveState={data().archiveState} disabled={working() || task().errors.length > 0}
           onMove={(column) => moveSelectedTask(task(), column)} />
@@ -507,9 +509,9 @@ export default function OslBoard() {
           <a class="osl-open-emacs" href={`org-protocol://osl?reference=${encodeURIComponent(`osl:${task().id}`)}`}>Открыть в Emacs</a>
         </div>
         <p role="status">{copyStatus()}</p>
-        <div class="osl-body" innerHTML={renderMarkdown(task().body)} />
-        <footer><small>{task().path}</small></footer>
-      </dialog></Portal>;
+        </>}
+        footerSlot={<footer><small>{task().path}</small></footer>}
+      />;
     }}</Show>
   </>;
 }

@@ -4,6 +4,8 @@ import {
   onMount,
   createMemo,
   onCleanup,
+  For,
+  Show,
 } from "solid-js";
 import { api } from "../api";
 import { Menu } from "./menu";
@@ -20,6 +22,12 @@ import { addTagToContent, removeTagFromContent, setDueDateInContent, getDueDateF
 /**
  *
  * @param {Object} props
+ * @param {string} props.dialogLabel Accessible dialog label
+ * @param {boolean} props.readOnly Render the rich-text editor without editing controls
+ * @param {Function[]} props.editorPlugins Stacks Editor extensions
+ * @param {Object} props.parserFeatures Stacks Editor parser features
+ * @param {Element} props.metadataSlot Optional card metadata and actions
+ * @param {Element} props.footerSlot Optional card footer
  * @param {string} props.name Card name
  * @param {string} props.content Initial card content
  * @param {boolean} props.disableImageUpload Disable local image upload button
@@ -62,6 +70,7 @@ function ExpandedCard(props) {
   let backdropRef;
   let tagsInputRef;
   let editorContainerRef;
+  let renderedContent;
 
   function handleTagRenameChange(newValue) {
     setNewTagName(newValue);
@@ -152,6 +161,7 @@ function ExpandedCard(props) {
   }
 
   function handleEditorOnChange(e) {
+    if (props.readOnly) return;
     // Prevent update when opening dialog
     if (
       e?.target.name?.includes("mode-toggle") ||
@@ -244,16 +254,16 @@ function ExpandedCard(props) {
 
   createEffect(() => {
     setAvailableTags(
-      props.tagsOptions.filter(
+      (props.tagsOptions || []).filter(
         (tagOption) =>
-          !props.tags.some((tag) => tag.name === tagOption.name) &&
+          !(props.tags || []).some((tag) => tag.name === tagOption.name) &&
           tagOption.name.toLowerCase().includes(newTagName()?.toLowerCase())
       )
     );
   });
 
   onMount(() => {
-    const editorClasses = ["editor", "theme-system"];
+    const editorClasses = props.readOnly ? ["theme-system"] : ["editor", "theme-system"];
     if (props.disableImageUpload) {
       editorClasses.push("disable-image-upload");
     }
@@ -265,9 +275,18 @@ function ExpandedCard(props) {
         targetClassList: editorClasses,
         editorHelpLink: "https://github.com/BaldissaraMatheus/Tasks.md/issues",
         imageUpload: { handler: uploadImage },
+        editorPlugins: props.editorPlugins || [],
+        ...(props.parserFeatures ? { parserFeatures: props.parserFeatures } : {}),
       }
     );
+    renderedContent = props.content || "";
     setEditor(newEditor);
+    if (props.readOnly) {
+      newEditor.disable();
+      disableCheckboxes();
+      dialogRef.showModal();
+      return;
+    }
     const toolbarEndGroupNodes = [
       ...editorContainerRef.childNodes[0].childNodes[1].childNodes[0]
         .childNodes[1].childNodes[0].childNodes,
@@ -276,12 +295,26 @@ function ExpandedCard(props) {
     setModeBtns(modeBtns);
   });
 
+  function disableCheckboxes() {
+    editorContainerRef.querySelectorAll('input[type="checkbox"]').forEach((input) => { input.disabled = true; });
+  }
+
+  createEffect(() => {
+    const content = props.content || "";
+    if (!props.readOnly || !editor()) return;
+    if (renderedContent !== content) {
+      renderedContent = content;
+      editor().content = content;
+      disableCheckboxes();
+    }
+  });
+
   function handleClickEditorMode(e) {
     setMode(e.currentTarget.title);
   }
 
   createEffect(() => {
-    if (!editor || !dialogRef) {
+    if (props.readOnly || !editor() || !dialogRef) {
       return;
     }
     dialogRef.show();
@@ -297,6 +330,7 @@ function ExpandedCard(props) {
   });
 
   onCleanup(() => {
+    editor()?.destroy();
     for (const btn of modeBtns()) {
       btn.removeEventListener("click", handleClickEditorMode);
     }
@@ -349,7 +383,8 @@ function ExpandedCard(props) {
           ref={(el) => {
             dialogRef = el;
           }}
-          class={`${isMaximized() === "true" ? "dialog--maximized" : ""}`}
+          aria-label={props.dialogLabel}
+          class={`${isMaximized() === "true" ? "dialog--maximized" : ""} ${props.readOnly ? "dialog--read-only" : ""}`}
           onKeyDown={handleDialogKeyDown}
           onCancel={handleDialogCancel}
         >
@@ -357,7 +392,7 @@ function ExpandedCard(props) {
             <header class="dialog__toolbar">
               <div class="dialog__toolbar-name">
                 <h1>
-                  {isCardBeingRenamed() ? (
+                  {props.readOnly ? props.name : isCardBeingRenamed() ? (
                     <NameInput
                       value={newCardName()}
                       errorMsg={props.getNameErrorMsg(newCardName())}
@@ -399,7 +434,8 @@ function ExpandedCard(props) {
                 </button>
               </div>
             </header>
-            <div class="dialog__tags-and-due-date">
+            {props.metadataSlot}
+            <Show when={!props.readOnly}><div class="dialog__tags-and-due-date">
               <div class="dialog__tags">
                 {isCreatingNewTag() ? (
                   <NameInput
@@ -452,6 +488,7 @@ function ExpandedCard(props) {
                 ></input>
               </div>
             </div>
+            </Show>
             <div class="dialog__content">
               <style>{stacksEditorStyle}</style>
               <style>{stacksStyle}</style>
@@ -465,6 +502,7 @@ function ExpandedCard(props) {
                 onClick={handleEditorOnChange}
               />
             </div>
+            {props.footerSlot}
           </div>
           <Menu
             id="tag-menu"
