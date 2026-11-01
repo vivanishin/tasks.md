@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { createHash, randomUUID } = require("node:crypto");
 
 const ID = /^[1-9][0-9]*$/;
 const dateValid = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value)
@@ -125,6 +126,7 @@ function parseTask(content, relativePath, config) {
   if (/^(<{7}|={7}|>{7})(?: |$)/m.test(content)) errors.push("Unresolved Git conflict");
   return {
     id: id && ID.test(id) ? id : null,
+    revision: createHash("sha256").update(content).digest("hex"),
     title: heading ? heading[1].trim() : path.basename(relativePath, ".md"),
     state, tags, space,
     due, created, updated, path: relativePath.split(path.sep).join("/"),
@@ -259,6 +261,35 @@ function lookup(root, reference) {
   return path.join(root, matches[0].path);
 }
 
+function edit(root, reference, { path: expectedPath, revision, title, body }) {
+  const filename = lookup(root, reference);
+  const relative = path.relative(root, filename);
+  const content = fs.readFileSync(filename, "utf8");
+  const config = readConfig(root);
+  const task = parseTask(content, relative, config);
+  if (task.path !== expectedPath || task.revision !== revision) {
+    throw new Error("Card changed since editing started; copy your draft and reopen the card");
+  }
+  if (task.errors.length) throw new Error(task.errors.join("; "));
+  if (typeof title !== "string" || !title.trim() || /[\r\n]/.test(title) || typeof body !== "string") {
+    throw new Error("Expected a one-line title and Markdown body");
+  }
+  if (title === task.title && body === task.body) return;
+  const heading = /^# (.+)\r?$/m.exec(content);
+  const newline = heading[0].endsWith("\r") ? "\r\n" : "\n";
+  const updated = `${content.slice(0, heading.index)}# ${title.trim()}${newline}${body}`;
+  const parsed = parseTask(updated, relative, config);
+  if (parsed.errors.length) throw new Error(parsed.errors.join("; "));
+  const temporary = `${filename}.tmp-${randomUUID()}`;
+  fs.writeFileSync(temporary, updated, { flag: "wx", mode: fs.statSync(filename).mode });
+  try {
+    if (fs.readFileSync(filename, "utf8") !== content) throw new Error("Card changed while saving; reopen it");
+    fs.renameSync(temporary, filename);
+  } finally {
+    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+  }
+}
+
 function init(root) {
   fs.mkdirSync(root, { recursive: true });
   const config = readConfig(root);
@@ -319,6 +350,7 @@ function main(args) {
   if (!root) throw new Error("Specify --root TASKS_DIR");
   root = path.resolve(root);
   const command = args.shift();
+  if (command === "edit" && args.length === 1) return edit(root, args[0], JSON.parse(fs.readFileSync(0, "utf8")));
   if (command === "config" && !args.length) return process.stdout.write(`${JSON.stringify(readConfig(root))}\n`);
   if (command === "init" && !args.length) return init(root);
   if (command === "validate" && !args.length) {
@@ -358,7 +390,7 @@ function main(args) {
   throw new Error("Usage: osl.js --root DIR init|config|validate|snapshot|lookup NUMBER_OR_REFERENCE|capture --title TITLE [--space SPACE] [--tag TAG] [--state STATE] [--body TEXT]");
 }
 
-module.exports = { readConfig, readOrder, parseTask, snapshot, planMove, lookup, init, capture };
+module.exports = { readConfig, readOrder, parseTask, snapshot, planMove, lookup, init, capture, edit };
 if (require.main === module) {
   try { main(process.argv.slice(2)); }
   catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; }

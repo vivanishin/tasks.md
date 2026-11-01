@@ -31,12 +31,18 @@ const multerInstance = multer();
 
 const app = new Koa();
 
-async function runHelper(args) {
+async function runHelper(args, input) {
   if (!process.env.OSL_HELPER) throw new Error("Configure OSL_HELPER for Git operations");
-  return runFile(process.env.OSL_HELPER, args, {
+  const result = runFile(process.env.OSL_HELPER, args, {
     env: { ...process.env, OSL_TASKS: TASKS_DIR, OSL_APP: `${__dirname}/..`,
       OSL_NODE: process.execPath, GIT_TERMINAL_PROMPT: "0" },
   });
+  if (input !== undefined) {
+    // A rejected operation may exit before reading stdin; execFile reports that exit.
+    result.child.stdin.on("error", () => {});
+    result.child.stdin.end(JSON.stringify(input));
+  }
+  return result;
 }
 
 async function gitStatus() {
@@ -44,9 +50,9 @@ async function gitStatus() {
   catch (error) { return { unpushed: null, error: error.stderr?.trim() || error.message }; }
 }
 
-async function completeMutation(ctx, args) {
+async function completeMutation(ctx, args, input) {
   try {
-    await runHelper(args);
+    await runHelper(args, input);
     ctx.status = 204;
   } catch (error) {
     ctx.status = typeof error.code === "number" ? 409 : 503;
@@ -252,6 +258,18 @@ async function updateResource(ctx) {
     const body = ctx.request.body;
     const current = osl.snapshot(TASKS_DIR);
     const task = current.tasks.find((task) => task.path === oldPath);
+    if (ctx.is("application/json") && body && !Array.isArray(body)
+        && Object.keys(body).length === 3
+        && typeof body.title === "string" && typeof body.body === "string"
+        && typeof body.revision === "string" && /^[a-f0-9]{64}$/.test(body.revision)) {
+      if (!task?.id || task.errors.length) {
+        ctx.status = 409;
+        ctx.body = { error: "Card is missing or invalid; reopen it" };
+        return;
+      }
+      await completeMutation(ctx, ["edit", `osl:${task.id}`], { ...body, path: oldPath });
+      return;
+    }
     const parts = typeof body?.newPath === "string" ? body.newPath.replace(/^\//, "").split("/") : [];
     if (!ctx.is("application/json") || Object.keys(body || {}).some((key) => !["newPath", "before"].includes(key))
         || (Object.hasOwn(body || {}, "before") && body.before !== null

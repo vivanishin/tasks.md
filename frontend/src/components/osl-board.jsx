@@ -119,6 +119,11 @@ export default function OslBoard() {
   const [captureSpace, setCaptureSpace] = createSignal("");
   const [captureError, setCaptureError] = createSignal("");
   const [taskMoveError, setTaskMoveError] = createSignal("");
+  const [editing, setEditing] = createSignal(null);
+  const [draftTitle, setDraftTitle] = createSignal("");
+  const [saving, setSaving] = createSignal(false);
+  const [editError, setEditError] = createSignal("");
+  let editingEditor;
   const [writeError, setWriteError] = createSignal("");
   const [search, setSearch] = createSignal("");
   const [space, setSpace] = createSignal("");
@@ -132,7 +137,7 @@ export default function OslBoard() {
   const [copyStatus, setCopyStatus] = createSignal("");
   const [refreshed, setRefreshed] = createSignal("");
   const { t, locale } = useI18n();
-  const working = () => busy() || moving() || pushing() || creating();
+  const working = () => busy() || moving() || pushing() || creating() || saving();
   const tasks = () => data().tasks;
   const spaces = createMemo(() => [...new Set([...(data().spaces || []), ...tasks().map((task) => task.space).filter(Boolean)])]);
   const spaceError = createMemo(() => spaceInitialized() && space() && !spaces().includes(space())
@@ -225,7 +230,7 @@ export default function OslBoard() {
   }
 
   async function refresh() {
-    if (working()) return;
+    if (working() || editing()) return;
     setBusy(true);
     try {
       const response = await fetch(`${api}/osl`, { cache: "no-store" });
@@ -353,12 +358,64 @@ export default function OslBoard() {
   }
 
   function readHash() {
-    try { setReference(decodeURIComponent(window.location.hash.slice(1))); }
-    catch { setReference("invalid"); }
+    let next;
+    try { next = decodeURIComponent(window.location.hash.slice(1)); }
+    catch { next = "invalid"; }
+    if (next === reference()) return;
+    if (editing() && !canLeaveEdit()) {
+      window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}#${reference()}`);
+      return;
+    }
+    setEditing(null);
+    setEditError("");
+    setReference(next);
     setCopyStatus("");
     setTaskMoveError("");
   }
-  function close() { window.location.hash = ""; }
+  function hasDraftChanges() {
+    return editing() && (draftTitle() !== editing().title || editingEditor?.content !== editing().body);
+  }
+  function canLeaveEdit() {
+    return !saving() && (!hasDraftChanges() || window.confirm("Закрыть карточку без сохранения правок?"));
+  }
+  function close() {
+    if (!canLeaveEdit()) return;
+    setEditing(null);
+    window.location.hash = "";
+  }
+  function startEdit(task) {
+    if (working() || task.errors.length) return;
+    setDraftTitle(task.title);
+    setEditError("");
+    setEditing({ ...task });
+  }
+  async function cancelEdit() {
+    if (saving()) return;
+    setEditing(null);
+    setEditError("");
+    await refresh();
+  }
+  async function saveEdit() {
+    if (working() || !editing() || !editingEditor || !draftTitle().trim()) return;
+    const task = editing();
+    const body = editingEditor.content;
+    setSaving(true);
+    setEditError("");
+    editingEditor.disable();
+    try {
+      await writeRequest(`/resource/${task.path.split("/").map(encodeURIComponent).join("/")}`, "PATCH", {
+        revision: task.revision, title: draftTitle(), body,
+      });
+      setEditing(null);
+    } catch (failure) {
+      setEditError(`Не удалось завершить сохранение: ${failure.message}. Правки остаются в редакторе.`);
+      editingEditor.enable();
+    } finally { setSaving(false); }
+    if (!editing()) await refresh();
+  }
+  function beforeUnload(event) {
+    if (saving() || hasDraftChanges()) { event.preventDefault(); event.returnValue = ""; }
+  }
   async function copy(text) {
     try { await navigator.clipboard.writeText(text); setCopyStatus("Скопировано"); }
     catch { setCopyStatus(`Буфер обмена недоступен. Скопируйте вручную: ${text}`); }
@@ -378,12 +435,14 @@ export default function OslBoard() {
     window.addEventListener("hashchange", readHash);
     window.addEventListener("popstate", readLocation);
     window.addEventListener("focus", refresh);
+    window.addEventListener("beforeunload", beforeUnload);
     const interval = setInterval(() => { if (!document.hidden) refresh(); }, 30000);
     onCleanup(() => {
       clearInterval(interval);
       window.removeEventListener("hashchange", readHash);
       window.removeEventListener("popstate", readLocation);
       window.removeEventListener("focus", refresh);
+      window.removeEventListener("beforeunload", beforeUnload);
     });
   });
 
@@ -489,19 +548,33 @@ export default function OslBoard() {
     </Show>
     <Show when={selected().length === 1 && reference()} keyed>{(taskReference) => {
       const task = () => tasks().find((task) => `osl:${task.id}` === taskReference);
-      return <ExpandedCard readOnly dialogLabel="Задача OSL" name={task().title} content={task().body} onClose={close} t={t}
+      return <Show when={editing() ? "edit" : "read"} keyed>{(mode) => <ExpandedCard
+        readOnly={mode === "read"} sourceMode={mode === "edit"} disableImageUpload
+        onEditorReady={(editor) => { editingEditor = editor; }}
+        dialogLabel="Задача OSL" name={task().title} content={mode === "edit" ? editing()?.body ?? task().body : task().body} onClose={close} t={t}
         tags={[]} tagsOptions={[]}
         editorOptions={{ editorPlugins: [oslEditorPlugin], parserFeatures: { html: false, tagLinks: false } }}
         metadataSlot={<>
         <p class="osl-task-meta">{`osl:${task().id} · `}<TaskColumnMenu task={task()} columns={data().states}
-          archiveState={data().archiveState} disabled={working() || task().errors.length > 0}
+          archiveState={data().archiveState} disabled={working() || Boolean(editing()) || task().errors.length > 0}
           onMove={(column) => moveSelectedTask(task(), column)} />
           <For each={displayedTags(task())}>{(tag) => <span>{` · ${tag}`}</span>}</For>
         </p>
         <Show when={task().due}><p>Срок / пересмотр: {task().due}</p></Show>
         <Show when={task().errors.length}><p class="osl-alert">{task().errors.join("; ")}</p></Show>
         <Show when={taskMoveError()}><p class="osl-alert osl-task-move-error" role="alert" style={{ "white-space": "pre-wrap" }}>{taskMoveError()}</p></Show>
+        <Show when={mode === "edit"}>
+          <label>Название<input aria-label="Название карточки" value={draftTitle()} disabled={saving()}
+            onInput={(event) => setDraftTitle(event.target.value)} /></label>
+        </Show>
+        <Show when={editError()}><p class="osl-alert" role="alert" style={{ "white-space": "pre-wrap" }}>{editError()}</p></Show>
         <div class="osl-copy">
+          <Show when={mode === "read"} fallback={<>
+            <button type="button" onClick={saveEdit} disabled={working() || !draftTitle().trim()}>{saving() ? "Сохранение…" : "Сохранить"}</button>
+            <button type="button" onClick={cancelEdit} disabled={saving()}>Отмена</button>
+          </>}>
+            <button type="button" onClick={() => startEdit(task())} disabled={working() || task().errors.length > 0}>Редактировать</button>
+          </Show>
           <button type="button" onClick={() => copy(`osl:${task().id}`)}>Копировать osl:</button>
           <button type="button" onClick={() => copy(orgLink(task()))}>Копировать Org-ссылку</button>
           <button type="button" onClick={() => copy(markdownLink(task()))}>Копировать md-ссылку</button>
@@ -512,7 +585,7 @@ export default function OslBoard() {
         <p role="status">{copyStatus()}</p>
         </>}
         footerSlot={<footer><small>{task().path}</small></footer>}
-      />;
+      />}</Show>;
     }}</Show>
   </>;
 }

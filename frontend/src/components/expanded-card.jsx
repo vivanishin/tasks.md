@@ -15,6 +15,7 @@ import { makePersisted } from "@solid-primitives/storage";
 import { NameInput } from "./name-input";
 import { Portal } from "solid-js/web";
 import { StacksEditor } from "./Stacks-Editor/src/stacks-editor/editor";
+import { EditorType } from "./Stacks-Editor/src/shared/view";
 import { IconClear, IconScreenFull, IconScreenNormal } from "@stackoverflow/stacks-icons/icons";
 import stacksStyle from "@stackoverflow/stacks/dist/css/stacks.css?inline";
 import stacksEditorStyle from "./Stacks-Editor/src/styles/index.css?inline";
@@ -25,6 +26,8 @@ import { addTagToContent, removeTagFromContent, setDueDateInContent, getDueDateF
  * @param {Object} props
  * @param {string} props.dialogLabel Accessible dialog label
  * @param {boolean} props.readOnly Render the rich-text editor without editing controls
+ * @param {boolean} props.sourceMode Edit Markdown without a rich-text round trip
+ * @param {Function} props.onEditorReady Receive the editor for explicit saving
  * @param {Object} props.editorOptions Additional Stacks Editor options
  * @param {Element} props.metadataSlot Optional card metadata and actions
  * @param {Element} props.footerSlot Optional card footer
@@ -160,7 +163,7 @@ function ExpandedCard(props) {
   }
 
   function handleEditorOnChange(e) {
-    if (props.readOnly) return;
+    if (props.readOnly || props.sourceMode) return;
     // Prevent update when opening dialog
     if (
       e?.target.name?.includes("mode-toggle") ||
@@ -268,20 +271,32 @@ function ExpandedCard(props) {
     }
     const newEditor = new StacksEditor(
       editorContainerRef,
-      props.content || "",
+      props.sourceMode ? "" : props.content || "",
       {
         classList: ["theme-system"],
         targetClassList: editorClasses,
         editorHelpLink: "https://github.com/BaldissaraMatheus/Tasks.md/issues",
         imageUpload: { handler: uploadImage },
         ...props.editorOptions,
+        ...(props.sourceMode ? { defaultView: EditorType.Commonmark } : {}),
       }
     );
+    if (props.sourceMode) {
+      // HTML <pre> parsing strips the first newline; insert source as text instead.
+      const view = newEditor.editorView;
+      view.dispatch(view.state.tr.insertText(props.content || "", 1).setMeta("addToHistory", false));
+    }
     setEditor(newEditor);
+    props.onEditorReady?.(newEditor);
     if (props.readOnly) {
       newEditor.disable();
       disableCheckboxes();
       dialogRef.showModal();
+      return;
+    }
+    if (props.sourceMode) {
+      dialogRef.showModal();
+      newEditor.focus();
       return;
     }
     const toolbarEndGroupNodes = [
@@ -308,7 +323,7 @@ function ExpandedCard(props) {
   }
 
   createEffect(() => {
-    if (props.readOnly || !editor() || !dialogRef) {
+    if (props.readOnly || props.sourceMode || !editor() || !dialogRef) {
       return;
     }
     dialogRef.show();
@@ -378,7 +393,7 @@ function ExpandedCard(props) {
             dialogRef = el;
           }}
           aria-label={props.dialogLabel}
-          class={`${isMaximized() === "true" ? "dialog--maximized" : ""} ${props.readOnly ? "dialog--read-only" : ""}`}
+          class={`${isMaximized() === "true" ? "dialog--maximized" : ""} ${props.readOnly ? "dialog--read-only" : ""} ${props.sourceMode ? "dialog--source" : ""}`}
           onKeyDown={handleDialogKeyDown}
           onCancel={handleDialogCancel}
         >
@@ -386,7 +401,7 @@ function ExpandedCard(props) {
             <header class="dialog__toolbar">
               <div class="dialog__toolbar-name">
                 <h1>
-                  {props.readOnly ? props.name : isCardBeingRenamed() ? (
+                  {props.readOnly || props.sourceMode ? props.name : isCardBeingRenamed() ? (
                     <NameInput
                       value={newCardName()}
                       errorMsg={props.getNameErrorMsg(newCardName())}
@@ -429,7 +444,7 @@ function ExpandedCard(props) {
               </div>
             </header>
             {props.metadataSlot}
-            <Show when={!props.readOnly}><div class="dialog__tags-and-due-date">
+            <Show when={!props.readOnly && !props.sourceMode}><div class="dialog__tags-and-due-date">
               <div class="dialog__tags">
                 {isCreatingNewTag() ? (
                   <NameInput

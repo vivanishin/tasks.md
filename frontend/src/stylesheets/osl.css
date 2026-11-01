@@ -70,7 +70,12 @@ dialog.osl-capture { width: min(480px, 95vw); height: fit-content; }
 .dialog--read-only footer { opacity: .7; font-size: .8rem; overflow-wrap: anywhere; }
 dialog.dialog--read-only { width: min(960px, 95vw); height: auto; max-height: 90dvh; overflow: auto; color: var(--color-foreground); }
 dialog.dialog--read-only.dialog--maximized { width: 100%; height: 100%; max-height: 100dvh; }
-.dialog--read-only::backdrop { background: rgb(0 0 0 / .55); }
+.dialog--read-only::backdrop, .dialog--source::backdrop { background: rgb(0 0 0 / .55); }
 .dialog--read-only #editor-container .ProseMirror div.task-item { align-items: flex-start; gap: .5rem; margin: 0; }
 .dialog--read-only #editor-container .ProseMirror div.task-item > input { width: 1em; height: 1em; flex-shrink: 0; margin: .3em 0 0; padding: 0; }
 .dialog--read-only #editor-container .ProseMirror .content-dom { min-width: 0; }
+
+.dialog--source { color: var(--color-foreground); }
+.dialog--source .dialog__toolbar h1 { font-size: 1.3rem; margin: 0; }
+.dialog--source input[aria-label="Название карточки"] { display: block; width: 100%; box-sizing: border-box; }
+.dialog--source .js-editor-toggle-btn, .dialog--source label[for^="mode-toggle-"] { display: none; }
