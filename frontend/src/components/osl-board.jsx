@@ -574,7 +574,7 @@ export default function OslBoard() {
         </p>
         <Show when={task().repeat}><p>Повтор: {task().repeat}</p>
           <details><summary>История повторов</summary>
-            <For each={task().occurrences}>{(entry) => <p>{entry.event === "closed" ? "Закрыто" : "Открыто"}: {entry.at}</p>}</For>
+            <For each={task().occurrences}>{(entry) => <p>{entry.event === "closed" ? "Закрыто" : "Открыто"}: {entry.at.slice(0, 16).replace("T", " ")}</p>}</For>
           </details>
         </Show>
         <Show when={task().due}><p>Срок / пересмотр: {task().due}</p></Show>
