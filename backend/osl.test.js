@@ -392,6 +392,12 @@ test("OSL Web capture commits only the new task and allocator and reports a reta
   assert.equal(git("rev-parse", "HEAD"), committed);
   assert.equal(fs.readFileSync(path.join(root, ".next-id"), "utf8"), "4\n");
   assert.equal(osl.snapshot(root).tasks.length, 3);
+  git("config", "core.hooksPath", "/dev/null");
+  response = await post({ ...valid, title: "Top card", state: "00-inbox" });
+  assert.equal(response.status, 201);
+  const top = await response.json();
+  assert.deepEqual(osl.snapshot(root).tasks.filter((task) => task.state === "00-inbox").map((task) => task.id), [top.id, other.id]);
+  assert.equal(fs.readFileSync(other.path, "utf8"), beforeOther);
 });
 
 test("OSL moves commit locally; explicit push updates Git status and preserves failures", async (t) => {

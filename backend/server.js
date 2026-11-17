@@ -111,6 +111,7 @@ router.post("/osl/capture", async (ctx) => {
     ctx.body = { error: "Configure OSL_HELPER for Git operations" };
     return;
   }
+  const first = osl.snapshot(TASKS_DIR).tasks.find((task) => task.state === body.state);
   let task;
   try { task = osl.capture(TASKS_DIR, body); }
   catch (error) {
@@ -120,6 +121,7 @@ router.post("/osl/capture", async (ctx) => {
   }
   try {
     await runHelper(["commit", "--task", task.reference, "--message", `planning/osl/tasks: capture ${task.reference}`]);
+    if (first) await runHelper(["move", task.reference, "--to", body.state, "--before", first.id]);
     ctx.status = 201;
     ctx.body = task;
   } catch (error) {

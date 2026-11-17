@@ -327,7 +327,7 @@ export default function OslBoard() {
   async function moveSelectedTask(task, column) {
     if (working() || task.errors.length || !data().states.includes(column) || task.state === column) return;
     setTaskMoveError("");
-    const failure = await moveTask(task, column);
+    const failure = await moveTask(task, column, data().tasks.find((item) => item.state === column)?.id ?? null);
     if (reference() === `osl:${task.id}`) setTaskMoveError(failure);
   }
 
