@@ -1,4 +1,5 @@
 import { createSignal, createMemo, createEffect, onMount, onCleanup, lazy, For, Show } from "solid-js";
+import { IconPencil, IconCopy } from "@stackoverflow/stacks-icons/icons";
 import { Portal } from "solid-js/web";
 import { Card } from "./card";
 import { oslEditorPlugin } from "../osl-editor.mjs";
@@ -597,13 +598,15 @@ export default function OslBoard() {
             <button type="button" onClick={async () => { if (await finishEdit()) await refresh(); }}>Готово</button>
             <Show when={editError()}><button type="button" onClick={() => { setEditError(""); saveEdit(); }}>Повторить</button></Show>
           </>}>
-            <button type="button" onClick={() => startEdit(task())} disabled={working() || task().errors.length > 0}>Редактировать</button>
+            <button type="button" onClick={() => startEdit(task())} disabled={working() || task().errors.length > 0}><span aria-hidden="true" innerHTML={IconPencil} />Редактировать</button>
           </Show>
+          <details class="osl-copy-options"><summary><span aria-hidden="true" innerHTML={IconCopy} />Копировать…</summary>
           <button type="button" onClick={() => copy(`osl:${task().id}`)}>Копировать osl:</button>
           <button type="button" onClick={() => copy(orgLink(task()))}>Копировать Org-ссылку</button>
           <button type="button" onClick={() => copy(markdownLink(task()))}>Копировать md-ссылку</button>
           <button type="button" onClick={() => copy(taskFilePath(localTasksDirectory, task()))}>Копировать путь к файлу</button>
           <button type="button" onClick={() => copy(`${window.location.href.split("#")[0]}#osl:${task().id}`)}>Копировать Web-ссылку</button>
+          </details>
           <a class="osl-open-emacs" href={`org-protocol://osl?reference=${encodeURIComponent(`osl:${task().id}`)}`}>Открыть в Emacs</a>
         </div>
         <p role="status">{copyStatus()}</p>
