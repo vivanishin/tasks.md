@@ -132,7 +132,6 @@ export default function OslBoard() {
   const [collapsedColumns, setCollapsedColumns] = createSignal([]);
   let spaceParameter;
   const [tag, setTag] = createSignal("");
-  const [archive, setArchive] = createSignal(false);
   const [showAllTags, setShowAllTags] = createSignal(false);
   const [reference, setReference] = createSignal("");
   const [copyStatus, setCopyStatus] = createSignal("");
@@ -150,14 +149,12 @@ export default function OslBoard() {
   const visible = createMemo(() => tasks().filter((task) => {
     if (exact()) return task.id === exact();
     if (spaceError()) return false;
-    if (task.state === data().archiveState && !archive()) return false;
     if (space() && task.space && data().spaces.includes(task.space) && task.space !== space()) return false;
     if (tag() && !task.tags.includes(tag())) return false;
     const needle = search().trim().toLowerCase();
     return `${task.title}\n${task.body}\n${task.tags.join(" ")}\nosl:${task.id}`.toLowerCase().includes(needle);
   }));
-  const states = createMemo(() => [...new Set([...data().states, ...tasks().map((task) => task.state)])]
-    .filter((state) => state !== data().archiveState || archive() || visible().some((task) => task.state === state)));
+  const states = createMemo(() => [...new Set([...data().states, ...tasks().map((task) => task.state)])]);
   const selected = createMemo(() => tasks().filter((task) => `osl:${task.id}` === reference()));
   const selectedError = createMemo(() => {
     if (!reference()) return "";
@@ -170,7 +167,7 @@ export default function OslBoard() {
   createEffect(() => {
     if (!spaceInitialized()) return;
     const key = columnPreferencesKey();
-    let columns = [];
+    let columns = data().archiveState ? [data().archiveState] : [];
     try {
       const saved = JSON.parse(localStorage.getItem(key));
       if (Array.isArray(saved)) columns = saved.filter((column) => typeof column === "string");
@@ -473,7 +470,6 @@ export default function OslBoard() {
       <select aria-label="Лейбл" value={tag()} onChange={(event) => setTag(event.target.value)}>
         <option value="">Все лейблы</option><For each={tags()}>{(value) => <option value={value}>{value}</option>}</For>
       </select>
-      <label class="osl-checkbox"><input type="checkbox" checked={archive()} onChange={(event) => setArchive(event.target.checked)} />Архив</label>
       <label class="osl-checkbox"><input type="checkbox" checked={showAllTags()} onChange={(event) => {
         setShowAllTags(event.target.checked);
         if (tag() && !tags().includes(tag())) setTag("");
