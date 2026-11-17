@@ -8,6 +8,7 @@ const multer = require("@koa/multer");
 const mount = require("koa-mount");
 const serve = require("koa-static");
 const osl = require("./osl");
+const recurrence = require("./osl-recurrence");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const runFile = promisify(execFile);
@@ -79,7 +80,14 @@ if (OSL_READ_ONLY) {
     const apiPath = `${BASE_PATH}/_api`;
     if (ctx.path === apiPath || ctx.path.startsWith(`${apiPath}/`)) {
       if (ctx.path === `${apiPath}/osl`) {
-        try { ctx.body = { ...osl.snapshot(TASKS_DIR), title: TITLE || "OSL", git: await gitStatus() }; }
+        try {
+          let current = osl.snapshot(TASKS_DIR);
+          if (current.tasks.some((task) => !task.errors.length && task.state === current.archiveState && recurrence.isDue(task))) {
+            try { await runHelper(["recur"]); current = osl.snapshot(TASKS_DIR); }
+            catch (error) { current = osl.snapshot(TASKS_DIR); current.issues.push({ path: "recurring", message: error.stderr?.trim() || error.message }); }
+          }
+          ctx.body = { ...current, title: TITLE || "OSL", git: await gitStatus() };
+        }
         catch (error) {
           console.error(`OSL read failed (${error.code || error.name})`);
           ctx.status = 503;

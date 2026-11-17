@@ -2,6 +2,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createHash, randomUUID } = require("node:crypto");
 
+const recurrence = require("./osl-recurrence");
+
 const ID = /^[1-9][0-9]*$/;
 const dateValid = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value)
   && !Number.isNaN(Date.parse(value))
@@ -74,7 +76,7 @@ function parseTask(content, relativePath, config) {
   for (const [, key, value] of markers) {
     if (!fields.has(key)) fields.set(key, []);
     fields.get(key).push(value);
-    if (!["id", "tag", "created", "updated", "due", "legacy"].includes(key)) {
+    if (!["id", "tag", "created", "updated", "due", "legacy", "repeat", "opened", "closed"].includes(key)) {
       errors.push(`Unsupported metadata: ${key}`);
     }
   }
@@ -101,6 +103,15 @@ function parseTask(content, relativePath, config) {
   }
   const due = single("due");
   if (fields.has("due") && !dateValid(due || "")) errors.push("Invalid due date");
+  const repeat = single("repeat");
+  if (fields.has("repeat")) {
+    try { recurrence.interval(repeat); } catch (error) { errors.push(error.message); }
+  }
+  const occurrences = markers.filter(([, key]) => ["opened", "closed"].includes(key))
+    .map(([, event, at]) => ({ event, at }));
+  for (const occurrence of occurrences) {
+    if (!timestampValid(occurrence.at)) errors.push(`Invalid ${occurrence.event} UTC timestamp`);
+  }
   const tags = fields.get("tag") || [];
   const scopes = new Map();
   for (const tag of tags) {
@@ -129,7 +140,7 @@ function parseTask(content, relativePath, config) {
     revision: createHash("sha256").update(content).digest("hex"),
     title: heading ? heading[1].trim() : path.basename(relativePath, ".md"),
     state, tags, space,
-    due, created, updated, path: relativePath.split(path.sep).join("/"),
+    due, created, updated, repeat, occurrences, path: relativePath.split(path.sep).join("/"),
     body: heading ? content.slice(heading.index + heading[0].length).replace(/^\r?\n/, "") : content,
     errors,
   };
@@ -228,19 +239,26 @@ function snapshot(root) {
     archiveState: config?.archiveColumn || null, nextId, allocationSafe, tasks, issues };
 }
 
-function planMove(root, reference, { state, before }) {
+function planMove(root, reference, { state, before, ifDue = false }) {
   const current = snapshot(root);
   if (current.issues.length) throw new Error("Run validate and resolve task-store issues before moving cards");
   const match = /^(?:osl:)?([1-9][0-9]*)$/.exec(reference);
   const task = current.tasks.find((task) => task.id === match?.[1]);
   if (!task) throw new Error(`Unknown or invalid reference ${reference}`);
   if (!current.states.includes(state)) throw new Error("Unknown target column");
+  if (ifDue) {
+    if (task.state !== current.archiveState || !recurrence.isDue(task)) return { source: task.path, target: task.path, order: null };
+    if (state !== readConfig(root).captureColumn) throw new Error("Recurring tasks must reopen in the capture column");
+    before = current.tasks.find((item) => item.state === state)?.id ?? null;
+  }
   const destination = current.tasks.filter((item) => item.state === state && item.id !== task.id).map((item) => item.id);
   if (before !== undefined && before !== null && !destination.includes(before)) {
     throw new Error("The preceding position must name another card in the target column; refresh the board");
   }
   const order = Object.assign(Object.create(null), readOrder(root, readConfig(root)));
   const result = { source: task.path, target: `${state}/${path.basename(task.path)}`, order: null };
+  const content = recurrence.transition(root, task, state, current.archiveState);
+  if (content !== null) result.content = content;
   if (task.state === state && before === undefined) return result;
   if (before === undefined && !fs.existsSync(path.join(root, ".order.json"))) return result;
   destination.splice(before == null ? destination.length : destination.indexOf(before), 0, task.id);
@@ -365,11 +383,18 @@ function main(args) {
   }
   if (command === "lookup" && args.length === 1) return process.stdout.write(`${lookup(root, args[0])}\n`);
   if (command === "snapshot" && !args.length) return process.stdout.write(`${JSON.stringify(snapshot(root))}\n`);
+  if (command === "due" && !args.length) {
+    const current = snapshot(root);
+    if (current.issues.length) throw new Error("Run validate before reopening recurring tasks");
+    return process.stdout.write(current.tasks.filter((task) => task.state === current.archiveState && recurrence.isDue(task))
+      .map((task) => task.id).join("\n"));
+  }
   if (command === "plan-move") {
     const reference = args.shift();
     const options = {};
     while (args.length) {
       const key = args.shift();
+      if (key === "--if-due" && !options.ifDue) { options.ifDue = true; continue; }
       if (key === "--last" && options.before === undefined) { options.before = null; continue; }
       const value = args.shift();
       if (!value || !["--to", "--before"].includes(key)) throw new Error(`Invalid move option ${key}`);

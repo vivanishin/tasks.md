@@ -586,3 +586,34 @@ test("HTTP reorder validates positions and commits one scoped change", async (t)
   const view = await (await fetch(`${base}/osl`)).json();
   assert.deepEqual(view.tasks.map((task) => task.id), [first.id, second.id]);
 });
+
+
+test("recurring cards log archive and reopen events without losing instructions or duplicating occurrences", (t) => {
+  const root = fixture(t);
+  const task = osl.capture(root, { title: "Maintenance", tags: ["recurring"], body: "Keep these instructions" });
+  fs.writeFileSync(task.path, fs.readFileSync(task.path, "utf8").replace("# Maintenance", "[repeat:1w]\n\n# Maintenance"));
+  let plan = osl.planMove(root, task.id, { state: "90-archive" });
+  assert.match(plan.content, /\[closed:/);
+  assert.match(plan.content, /Keep these instructions/);
+  fs.writeFileSync(path.join(root, plan.target), plan.content.replace(/\[closed:[^\]]+\]/, "[closed:2020-01-01T00:00:00.000Z]"));
+  fs.unlinkSync(task.path);
+  plan = osl.planMove(root, task.id, { state: "00-inbox", ifDue: true });
+  assert.match(plan.content, /\[opened:/);
+  fs.writeFileSync(task.path, plan.content);
+  fs.unlinkSync(path.join(root, "90-archive", path.basename(task.path)));
+  let current = osl.snapshot(root).tasks[0];
+  assert.deepEqual(current.occurrences.map((entry) => entry.event), ["closed", "opened"]);
+  assert.equal(current.repeat, "1w");
+  assert.match(current.body, /Keep these instructions/);
+  assert.deepEqual(osl.planMove(root, task.id, { state: "00-inbox", ifDue: true }), { source: current.path, target: current.path, order: null });
+  plan = osl.planMove(root, task.id, { state: "90-archive" });
+  fs.writeFileSync(path.join(root, plan.target), plan.content);
+  fs.unlinkSync(task.path);
+  current = osl.snapshot(root).tasks[0];
+  assert.deepEqual(current.occurrences.map((entry) => entry.event), ["closed", "opened", "closed"]);
+  assert.equal(osl.planMove(root, task.id, { state: "00-inbox", ifDue: true }).content, undefined);
+  const recurrence = require("./osl-recurrence");
+  assert.equal(recurrence.isDue({ ...current, tags: [...current.tags, "closure::cancelled"] }, Date.parse("2090-01-01")), false);
+  assert.throws(() => recurrence.interval("0d"));
+  assert.throws(() => recurrence.interval("monthly"));
+});

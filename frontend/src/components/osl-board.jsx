@@ -572,6 +572,11 @@ export default function OslBoard() {
           onMove={(column) => moveSelectedTask(task(), column)} />
           <For each={displayedTags(task())}>{(tag) => <span>{` · ${tag}`}</span>}</For>
         </p>
+        <Show when={task().repeat}><p>Повтор: {task().repeat}</p>
+          <details><summary>История повторов</summary>
+            <For each={task().occurrences}>{(entry) => <p>{entry.event === "closed" ? "Закрыто" : "Открыто"}: {entry.at}</p>}</For>
+          </details>
+        </Show>
         <Show when={task().due}><p>Срок / пересмотр: {task().due}</p></Show>
         <Show when={task().errors.length}><p class="osl-alert">{task().errors.join("; ")}</p></Show>
         <Show when={taskMoveError()}><p class="osl-alert osl-task-move-error" role="alert" style={{ "white-space": "pre-wrap" }}>{taskMoveError()}</p></Show>
