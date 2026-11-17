@@ -15,7 +15,7 @@ test("concurrent board reads reopen due recurring and scheduled cards once", asy
     spaces: ["home"], captureColumn: "inbox", defaultSpace: "home", archiveColumn: "archive",
     webDefaults: { timeZone: "Europe/Moscow", rules: [{ space: "home" }] } }));
   osl.init(root);
-  const task = osl.capture(root, { title: "Recurring", state: "archive", tags: ["recurring"], body: "Instructions" });
+  const task = osl.capture(root, { title: "Recurring", state: "archive", body: "Instructions" });
   fs.writeFileSync(task.path, fs.readFileSync(task.path, "utf8")
     .replace("# Recurring", "[repeat:1d]\n[closed:2020-01-01T00:00:00.000Z]\n\n# Recurring"));
   const scheduled = osl.capture(root, { title: "Scheduled", state: "archive", body: "One-time instructions" });

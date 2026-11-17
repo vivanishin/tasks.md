@@ -590,7 +590,7 @@ test("HTTP reorder validates positions and commits one scoped change", async (t)
 
 test("recurring cards log archive and reopen events without losing instructions or duplicating occurrences", (t) => {
   const root = fixture(t);
-  const task = osl.capture(root, { title: "Maintenance", tags: ["recurring"], body: "Keep these instructions" });
+  const task = osl.capture(root, { title: "Maintenance", body: "Keep these instructions" });
   fs.writeFileSync(task.path, fs.readFileSync(task.path, "utf8").replace("# Maintenance", "[repeat:1w]\n\n# Maintenance"));
   let plan = osl.planMove(root, task.id, { state: "90-archive" });
   assert.match(plan.content, /\[closed:/);
@@ -624,7 +624,7 @@ test("explicit reopening dates use Moscow midnight and override the interval", (
   assert.equal(isDue(task, Date.parse("2026-11-30T20:59:59.999Z")), false);
   assert.equal(isDue(task, Date.parse("2026-11-30T21:00:00.000Z")), true);
   assert.equal(isDue(task, Date.parse("2026-12-04T12:00:00.000Z")), true);
-  const recurring = { ...task, tags: ["recurring"], repeat: "1d", occurrences: [{ event: "closed", at: "2020-01-01T00:00:00.000Z" }] };
+  const recurring = { ...task, repeat: "1d", occurrences: [{ event: "closed", at: "2020-01-01T00:00:00.000Z" }] };
   assert.equal(isDue(recurring, Date.parse("2026-11-30T20:00:00.000Z")), false);
   assert.equal(isDue({ ...task, tags: ["closure::cancelled"] }, Date.parse("2026-12-04")), false);
 });
@@ -651,7 +651,7 @@ test("scheduled cards can reopen early, consume the date and keep literal body m
 
 test("active moves and archive reordering keep history; reopening and closing start a fresh interval", (t) => {
   const root = fixture(t);
-  const captured = osl.capture(root, { title: "Lifecycle", tags: ["recurring"], body: "Instructions" });
+  const captured = osl.capture(root, { title: "Lifecycle", body: "Instructions" });
   fs.writeFileSync(captured.path, fs.readFileSync(captured.path, "utf8").replace("# Lifecycle", "[repeat:1w]\n[reopen:2090-12-01]\n\n# Lifecycle"));
   assert.equal(osl.planMove(root, captured.id, { state: "10-next" }).content, undefined);
   let plan = osl.planMove(root, captured.id, { state: "90-archive" });
@@ -672,4 +672,33 @@ test("active moves and archive reordering keep history; reopening and closing st
   const { isDue } = require("./osl-recurrence");
   assert.equal(isDue(closedAgain, now + 7 * 86400000 - 1), false);
   assert.equal(isDue(closedAgain, now + 7 * 86400000), true);
+  fs.renameSync(path.join(root, current.path), archived);
+  assert.match(osl.snapshot(root).issues.map((issue) => issue.message).join("; "), /does not match the workflow column/);
+  assert.throws(() => osl.planMove(root, captured.id, { state: "00-inbox", ifDue: true }), /validate/);
+});
+
+test("validation rejects contradictory scheduling metadata and history", (t) => {
+  const errors = (header, state = "90-archive") => osl.parseTask(
+    `[id:1]\n[tag:space::home]\n${header}\n\n# Validation\n`, `${state}/1.md`, board).errors;
+  const closed = "[closed:2026-11-17T19:00:00.000Z]";
+  const opened = "[opened:2026-11-18T19:00:00.000Z]";
+  assert.match(errors("[tag:recurring]\n[repeat:7d]", "00-inbox").join("; "), /redundant recurring tag/);
+  assert.match(errors("[repeat:7d]").join("; "), /needs a closing event or reopening date/);
+  assert.match(errors(`[repeat:7d]\n${opened}`).join("; "), /does not match the workflow column/);
+  assert.match(errors(`[repeat:7d]\n${closed}`, "00-inbox").join("; "), /does not match the workflow column/);
+  assert.match(errors(`[reopen:2090-12-01]\n${opened}`).join("; "), /does not match the workflow column/);
+  assert.match(errors(`[repeat:7d]\n${opened}\n${closed}`).join("; "), /must not go backwards/);
+  assert.match(errors(`[repeat:7d]\n${closed}\n${closed}`).join("; "), /must alternate/);
+  assert.deepEqual(errors("[repeat:7d]", "00-inbox"), []);
+  assert.deepEqual(errors("[repeat:7d]\n[reopen:2090-12-01]"), []);
+  assert.deepEqual(errors(`[repeat:7d]\n${closed}`), []);
+  assert.deepEqual(errors(`[repeat:7d]\n${opened}`, "00-inbox"), []);
+  assert.deepEqual(errors(closed, "00-inbox"), [], "stopping a rule preserves its old history");
+  const root = fixture(t);
+  const task = osl.capture(root, { title: "Clock skew" });
+  const content = fs.readFileSync(task.path, "utf8")
+    .replace("# Clock skew", "[repeat:7d]\n[opened:2090-01-01T00:00:00.000Z]\n\n# Clock skew");
+  fs.writeFileSync(task.path, content);
+  assert.throws(() => osl.planMove(root, task.id, { state: "90-archive" }), /must not go backwards/);
+  assert.equal(fs.readFileSync(task.path, "utf8"), content);
 });

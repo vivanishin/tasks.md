@@ -15,14 +15,13 @@ function isDue(task, now = Date.now()) {
     return task.reopen <= today;
   }
   const last = task.occurrences?.at(-1);
-  return task.tags.includes("recurring") && Boolean(task.repeat)
+  return Boolean(task.repeat)
     && last?.event === "closed" && Date.parse(last.at) + interval(task.repeat) <= now;
 }
 
 function transition(root, task, state, archive, now = new Date()) {
   const reopening = task.state === archive;
-  const repeating = task.tags.includes("recurring") && task.repeat;
-  if ((!repeating && !task.reopen) || task.state === state
+  if ((!task.repeat && !task.reopen) || task.state === state
       || ![task.state, state].includes(archive)) return null;
   const content = fs.readFileSync(path.join(root, task.path), "utf8");
   const heading = /^# /m.exec(content).index;

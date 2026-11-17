@@ -111,10 +111,14 @@ function parseTask(content, relativePath, config) {
   }
   const occurrences = markers.filter(([, key]) => ["opened", "closed"].includes(key))
     .map(([, event, at]) => ({ event, at }));
-  for (const occurrence of occurrences) {
+  for (const [index, occurrence] of occurrences.entries()) {
     if (!timestampValid(occurrence.at)) errors.push(`Invalid ${occurrence.event} UTC timestamp`);
+    const previous = occurrences[index - 1];
+    if (previous?.event === occurrence.event) errors.push("Opening and closing events must alternate");
+    if (previous && previous.at > occurrence.at) errors.push("History timestamps must not go backwards");
   }
   const tags = fields.get("tag") || [];
+  if (tags.includes("recurring")) errors.push("Remove the redundant recurring tag; use repeat or reopen");
   const scopes = new Map();
   for (const tag of tags) {
     if (!tag.trim() || tag.trim() !== tag) errors.push("Tag must be nonempty and trimmed");
@@ -135,6 +139,12 @@ function parseTask(content, relativePath, config) {
   const parts = relativePath.split(path.sep);
   const state = parts[0];
   if (parts.length !== 2 || !config?.columns.includes(state)) errors.push("Unknown workflow directory");
+  if ((repeat || reopen) && config) {
+    const archived = state === config.archiveColumn;
+    const last = occurrences.at(-1);
+    if (last && archived !== (last.event === "closed")) errors.push("History does not match the workflow column; record the missing move");
+    if (archived && repeat && !reopen && !last) errors.push("Archived repeating card needs a closing event or reopening date");
+  }
   if (!heading || !heading[1].trim()) errors.push("Missing task title (# Title)");
   if (/^(<{7}|={7}|>{7})(?: |$)/m.test(content)) errors.push("Unresolved Git conflict");
   return {
@@ -260,7 +270,11 @@ function planMove(root, reference, { state, before, ifDue = false }) {
   const order = Object.assign(Object.create(null), readOrder(root, readConfig(root)));
   const result = { source: task.path, target: `${state}/${path.basename(task.path)}`, order: null };
   const content = recurrence.transition(root, task, state, current.archiveState);
-  if (content !== null) result.content = content;
+  if (content !== null) {
+    const errors = parseTask(content, result.target, readConfig(root)).errors;
+    if (errors.length) throw new Error(errors.join("; "));
+    result.content = content;
+  }
   if (task.state === state && before === undefined) return result;
   if (before === undefined && !fs.existsSync(path.join(root, ".order.json"))) return result;
   destination.splice(before == null ? destination.length : destination.indexOf(before), 0, task.id);
