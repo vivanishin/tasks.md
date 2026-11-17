@@ -6,7 +6,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const osl = require("./osl");
 
-test("concurrent board reads reopen a due task once and commit its history", async (t) => {
+test("concurrent board reads reopen due recurring and scheduled cards once", async (t) => {
   if (!process.env.OSL_HELPER) return t.skip("Set OSL_HELPER to test automatic reopening");
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "osl-recur-http-"));
   const root = path.join(repo, "tasks");
@@ -18,6 +18,9 @@ test("concurrent board reads reopen a due task once and commit its history", asy
   const task = osl.capture(root, { title: "Recurring", state: "archive", tags: ["recurring"], body: "Instructions" });
   fs.writeFileSync(task.path, fs.readFileSync(task.path, "utf8")
     .replace("# Recurring", "[repeat:1d]\n[closed:2020-01-01T00:00:00.000Z]\n\n# Recurring"));
+  const scheduled = osl.capture(root, { title: "Scheduled", state: "archive", body: "One-time instructions" });
+  fs.writeFileSync(scheduled.path, fs.readFileSync(scheduled.path, "utf8")
+    .replace("# Scheduled", "[reopen:2020-01-01]\n\n# Scheduled"));
   const git = (...args) => {
     const result = spawnSync("git", ["-C", repo, ...args], { encoding: "utf8",
       env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" } });
@@ -41,11 +44,16 @@ test("concurrent board reads reopen a due task once and commit its history", asy
   const url = `http://127.0.0.1:${server.address().port}/_api/osl`;
   await Promise.all([fetch(url), fetch(url)]);
   const current = await (await fetch(url)).json();
-  assert.equal(current.tasks.length, 1);
-  assert.equal(current.tasks[0].state, "inbox");
-  assert.deepEqual(current.tasks[0].occurrences.map((entry) => entry.event), ["closed", "opened"]);
-  assert.match(current.tasks[0].body, /Instructions/);
-  assert.equal(git("rev-list", "--count", "HEAD"), "2");
+  assert.equal(current.tasks.length, 2);
+  const oneTime = current.tasks.find((task) => task.id === scheduled.id);
+  assert.equal(oneTime.state, "inbox");
+  assert.equal(oneTime.reopen, null);
+  assert.deepEqual(oneTime.occurrences.map((entry) => entry.event), ["opened"]);
+  const repeated = current.tasks.find((item) => item.id === task.id);
+  assert.equal(repeated.state, "inbox");
+  assert.deepEqual(repeated.occurrences.map((entry) => entry.event), ["closed", "opened"]);
+  assert.match(repeated.body, /Instructions/);
+  assert.equal(git("rev-list", "--count", "HEAD"), "3");
   const head = git("rev-parse", "HEAD");
   await fetch(url);
   assert.equal(git("rev-parse", "HEAD"), head);

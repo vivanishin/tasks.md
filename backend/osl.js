@@ -76,7 +76,7 @@ function parseTask(content, relativePath, config) {
   for (const [, key, value] of markers) {
     if (!fields.has(key)) fields.set(key, []);
     fields.get(key).push(value);
-    if (!["id", "tag", "created", "updated", "due", "legacy", "repeat", "opened", "closed"].includes(key)) {
+    if (!["id", "tag", "created", "updated", "due", "legacy", "repeat", "opened", "closed", "reopen"].includes(key)) {
       errors.push(`Unsupported metadata: ${key}`);
     }
   }
@@ -103,6 +103,8 @@ function parseTask(content, relativePath, config) {
   }
   const due = single("due");
   if (fields.has("due") && !dateValid(due || "")) errors.push("Invalid due date");
+  const reopen = single("reopen");
+  if (fields.has("reopen") && !dateValid(reopen || "")) errors.push("Invalid reopening date");
   const repeat = single("repeat");
   if (fields.has("repeat")) {
     try { recurrence.interval(repeat); } catch (error) { errors.push(error.message); }
@@ -140,7 +142,7 @@ function parseTask(content, relativePath, config) {
     revision: createHash("sha256").update(content).digest("hex"),
     title: heading ? heading[1].trim() : path.basename(relativePath, ".md"),
     state, tags, space,
-    due, created, updated, repeat, occurrences, path: relativePath.split(path.sep).join("/"),
+    due, created, updated, repeat, reopen, occurrences, path: relativePath.split(path.sep).join("/"),
     body: heading ? content.slice(heading.index + heading[0].length).replace(/^\r?\n/, "") : content,
     errors,
   };

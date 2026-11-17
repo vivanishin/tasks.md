@@ -69,12 +69,6 @@ published port or an isolated reverse-proxy network and mount `/tasks` read-only
 The container and mTLS proxy configuration need validation on the chosen server
 before remote deployment.
 
-Recurring cards use `[tag:recurring]` and `[repeat:7d]` or `[repeat:2w]`
-in the metadata header. Archive moves append `[closed:UTC_TIMESTAMP]`;
-reopening appends `[opened:UTC_TIMESTAMP]` and retains the instructions.
-The interval runs from the most recent close. Board refresh invokes `osl.sh
-recur` for due cards; each move rechecks its due status under the move lock,
-returns the card to the top of the capture column and commits its history.
-Cancelled cards stay archived. Removing `recurring` stops automatic reopening;
-existing history remains. Cards already archived need a real `[closed:...]`
-timestamp before their first automatic reopening. Days are 24-hour intervals.
+Recurring and scheduled reopening is implemented in `backend/osl-recurrence.js`.
+The [reopening contract](/mnt/co/notes/planning/osl/recurrence.org) owns the
+metadata format, date priority, archive transitions, manual moves and hooks.

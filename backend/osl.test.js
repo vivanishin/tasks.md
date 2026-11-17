@@ -617,3 +617,59 @@ test("recurring cards log archive and reopen events without losing instructions 
   assert.throws(() => recurrence.interval("0d"));
   assert.throws(() => recurrence.interval("monthly"));
 });
+
+test("explicit reopening dates use Moscow midnight and override the interval", () => {
+  const { isDue } = require("./osl-recurrence");
+  const task = { tags: [], reopen: "2026-12-01" };
+  assert.equal(isDue(task, Date.parse("2026-11-30T20:59:59.999Z")), false);
+  assert.equal(isDue(task, Date.parse("2026-11-30T21:00:00.000Z")), true);
+  assert.equal(isDue(task, Date.parse("2026-12-04T12:00:00.000Z")), true);
+  const recurring = { ...task, tags: ["recurring"], repeat: "1d", occurrences: [{ event: "closed", at: "2020-01-01T00:00:00.000Z" }] };
+  assert.equal(isDue(recurring, Date.parse("2026-11-30T20:00:00.000Z")), false);
+  assert.equal(isDue({ ...task, tags: ["closure::cancelled"] }, Date.parse("2026-12-04")), false);
+});
+
+test("scheduled cards can reopen early, consume the date and keep literal body markers", (t) => {
+  const root = fixture(t);
+  const captured = osl.capture(root, { title: "Scheduled", state: "90-archive", body: "Literal [reopen:2020-01-01]" });
+  const content = fs.readFileSync(captured.path, "utf8");
+  for (const date of ["2026-02-29", "2026-02-30", "2026-2-01", ""]) {
+    assert.ok(osl.parseTask(content.replace("# Scheduled", `[reopen:${date}]\n\n# Scheduled`), "90-archive/1.md", board).errors.includes("Invalid reopening date"));
+  }
+  const valid = content.replace("# Scheduled", "[reopen:2090-12-01]\n\n# Scheduled");
+  fs.writeFileSync(captured.path, valid);
+  assert.deepEqual(osl.snapshot(root).issues, []);
+  assert.equal(osl.planMove(root, captured.id, { state: "00-inbox", ifDue: true }).content, undefined);
+  const plan = osl.planMove(root, captured.id, { state: "00-inbox" });
+  const reopened = osl.parseTask(plan.content, plan.target, board);
+  assert.equal(reopened.reopen, null);
+  assert.deepEqual(reopened.occurrences.map((entry) => entry.event), ["opened"]);
+  assert.equal(reopened.body, osl.parseTask(valid, "90-archive/1.md", board).body);
+  assert.equal(osl.parseTask(content, "90-archive/1.md", board).reopen, null);
+  assert.match(osl.parseTask(valid.replace("# Scheduled", "[reopen:2090-12-02]\n\n# Scheduled"), "90-archive/1.md", board).errors.join("; "), /at most one reopen/);
+});
+
+test("active moves and archive reordering keep history; reopening and closing start a fresh interval", (t) => {
+  const root = fixture(t);
+  const captured = osl.capture(root, { title: "Lifecycle", tags: ["recurring"], body: "Instructions" });
+  fs.writeFileSync(captured.path, fs.readFileSync(captured.path, "utf8").replace("# Lifecycle", "[repeat:1w]\n[reopen:2090-12-01]\n\n# Lifecycle"));
+  assert.equal(osl.planMove(root, captured.id, { state: "10-next" }).content, undefined);
+  let plan = osl.planMove(root, captured.id, { state: "90-archive" });
+  const archived = path.join(root, plan.target);
+  fs.writeFileSync(archived, plan.content); fs.unlinkSync(captured.path);
+  let current = osl.snapshot(root).tasks.find((task) => task.id === captured.id);
+  assert.equal(current.reopen, "2090-12-01");
+  assert.deepEqual(current.occurrences.map((entry) => entry.event), ["closed"]);
+  assert.equal(osl.planMove(root, captured.id, { state: "90-archive", before: null }).content, undefined);
+  plan = osl.planMove(root, captured.id, { state: "10-next" });
+  fs.writeFileSync(path.join(root, plan.target), plan.content); fs.unlinkSync(archived);
+  current = osl.snapshot(root).tasks.find((task) => task.id === captured.id);
+  assert.equal(current.reopen, null);
+  assert.deepEqual(current.occurrences.map((entry) => entry.event), ["closed", "opened"]);
+  plan = osl.planMove(root, captured.id, { state: "90-archive" });
+  const closedAgain = osl.parseTask(plan.content, plan.target, board);
+  const now = Date.parse(closedAgain.occurrences.at(-1).at);
+  const { isDue } = require("./osl-recurrence");
+  assert.equal(isDue(closedAgain, now + 7 * 86400000 - 1), false);
+  assert.equal(isDue(closedAgain, now + 7 * 86400000), true);
+});
