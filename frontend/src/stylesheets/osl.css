@@ -31,7 +31,7 @@ dialog.osl-detail { width: min(900px, 95vw); height: auto; max-height: 90dvh; bo
 .osl-detail::backdrop { background: rgb(0 0 0 / .55); }
 .osl-detail header { display: flex; gap: 1rem; justify-content: space-between; align-items: start; }
 .osl-detail h2 { margin: 0; font-size: 1.3rem; overflow-wrap: anywhere; }
-.osl-copy > button, .osl-copy-options > summary { display: flex; align-items: center; gap: .4rem; }
+.osl-copy > button, .osl-copy-options > summary, .osl-open-emacs { display: inline-flex; align-items: center; box-sizing: border-box; height: 32px; gap: .4rem; }
 .osl-copy-options > button { display: block; width: 100%; margin-top: .3rem; text-align: start; }
 .osl-copy-options > summary { cursor: pointer; padding: 4px 15px; border-radius: 6px; background: var(--color-background-4); }
 .osl-copy { display: flex; flex-wrap: wrap; align-items: start; gap: .5rem; }
