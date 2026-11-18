@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const day = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Moscow" });
 
 function interval(value) {
   const match = /^([1-9][0-9]*)(d|w)$/.exec(value || "");
@@ -8,15 +9,25 @@ function interval(value) {
   return milliseconds;
 }
 
+function repeatAt(task) {
+  const last = task.occurrences?.at(-1);
+  return task.repeat && last?.event === "closed" ? Date.parse(last.at) + interval(task.repeat) : null;
+}
+
+function nextDate(task) {
+  if (task.tags.includes("closure::cancelled")) return null;
+  if (task.reopen) return task.reopen;
+  const at = repeatAt(task);
+  return at === null || Number.isNaN(new Date(at).getTime()) ? null : day.format(at);
+}
+
 function isDue(task, now = Date.now()) {
   if (task.tags.includes("closure::cancelled")) return false;
   if (task.reopen) {
-    const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Moscow" }).format(now);
-    return task.reopen <= today;
+    return task.reopen <= day.format(now);
   }
-  const last = task.occurrences?.at(-1);
-  return Boolean(task.repeat)
-    && last?.event === "closed" && Date.parse(last.at) + interval(task.repeat) <= now;
+  const at = repeatAt(task);
+  return at !== null && at <= now;
 }
 
 function isReady(task, board, now = Date.now()) {
@@ -38,12 +49,12 @@ function transition(root, task, state, config, reopen, now = new Date()) {
   const heading = /^# /m.exec(content).index;
   let header = content.slice(0, heading).trimEnd();
   if (nextDate !== task.reopen) {
-    header = header.replace(/\[reopen:[^\]\r\n]*\][ \t]*/g, "").trimEnd();
-    if (nextDate) header += `\n[reopen:${nextDate}]`;
+    header = header.replace(/\[recur::reopen:[^\]\r\n]*\][ \t]*/g, "").trimEnd();
+    if (nextDate) header += `\n[recur::reopen:${nextDate}]`;
   }
   if (event === "opened") header = header.replace(/\[tag:closure::[^\]\r\n]*\][ \t]*/g, "").trimEnd();
-  if (event) header += `\n[${event}:${now.toISOString()}]`;
+  if (event) header += `\n[recur::${event}:${now.toISOString()}]`;
   return `${header}\n\n${content.slice(heading)}`;
 }
 
-module.exports = { interval, isDue, isReady, transition };
+module.exports = { interval, isDue, isReady, nextDate, transition };

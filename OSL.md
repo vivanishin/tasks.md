@@ -71,5 +71,12 @@ The container and mTLS proxy configuration need validation on the chosen server
 before remote deployment.
 
 Recurring and scheduled reopening is implemented in `backend/osl-recurrence.js`.
+The shared `osl.refresh` checks due cards before reads and after successful
+capture, move, edit and commit operations. Push does not trigger reopening;
+`--push` publishes the operation and any hook commits together. Header fields
+use the `recur::` namespace. Edit responses confirm the current path, column
+and revision if the hook moved the saved card.
+Archived cards expose `nextReopen`, the next return day in Moscow, derived
+from the explicit date or closing time and interval; cancelled cards return null.
 The [reopening contract](/mnt/co/notes/planning/osl/recurrence.org) owns the
 metadata format, date priority, archive transitions, manual moves and hooks.

@@ -591,14 +591,14 @@ test("HTTP reorder validates positions and commits one scoped change", async (t)
 test("recurring cards log archive and reopen events without losing instructions or duplicating occurrences", (t) => {
   const root = fixture(t);
   const task = osl.capture(root, { title: "Maintenance", body: "Keep these instructions" });
-  fs.writeFileSync(task.path, fs.readFileSync(task.path, "utf8").replace("# Maintenance", "[repeat:1w]\n\n# Maintenance"));
+  fs.writeFileSync(task.path, fs.readFileSync(task.path, "utf8").replace("# Maintenance", "[recur::repeat:1w]\n\n# Maintenance"));
   let plan = osl.planMove(root, task.id, { state: "90-archive" });
-  assert.match(plan.content, /\[closed:/);
+  assert.match(plan.content, /\[recur::closed:/);
   assert.match(plan.content, /Keep these instructions/);
-  fs.writeFileSync(path.join(root, plan.target), plan.content.replace(/\[closed:[^\]]+\]/, "[closed:2020-01-01T00:00:00.000Z]"));
+  fs.writeFileSync(path.join(root, plan.target), plan.content.replace(/\[recur::closed:[^\]]+\]/, "[recur::closed:2020-01-01T00:00:00.000Z]"));
   fs.unlinkSync(task.path);
   plan = osl.planMove(root, task.id, { state: "00-inbox", ifDue: true });
-  assert.match(plan.content, /\[opened:/);
+  assert.match(plan.content, /\[recur::opened:/);
   fs.writeFileSync(task.path, plan.content);
   fs.unlinkSync(path.join(root, "90-archive", path.basename(task.path)));
   let current = osl.snapshot(root).tasks[0];
@@ -631,12 +631,12 @@ test("explicit reopening dates use Moscow midnight and override the interval", (
 
 test("scheduled cards can reopen early, consume the date and keep literal body markers", (t) => {
   const root = fixture(t);
-  const captured = osl.capture(root, { title: "Scheduled", state: "90-archive", body: "Literal [reopen:2020-01-01]" });
+  const captured = osl.capture(root, { title: "Scheduled", state: "90-archive", body: "Literal [recur::reopen:2020-01-01]" });
   const content = fs.readFileSync(captured.path, "utf8");
   for (const date of ["2026-02-29", "2026-02-30", "2026-2-01", ""]) {
-    assert.ok(osl.parseTask(content.replace("# Scheduled", `[reopen:${date}]\n\n# Scheduled`), "90-archive/1.md", board).errors.includes("Invalid reopening date"));
+    assert.ok(osl.parseTask(content.replace("# Scheduled", `[recur::reopen:${date}]\n\n# Scheduled`), "90-archive/1.md", board).errors.includes("Invalid reopening date"));
   }
-  const valid = content.replace("# Scheduled", "[reopen:2090-12-01]\n\n# Scheduled");
+  const valid = content.replace("# Scheduled", "[recur::reopen:2090-12-01]\n\n# Scheduled");
   fs.writeFileSync(captured.path, valid);
   assert.deepEqual(osl.snapshot(root).issues, []);
   assert.equal(osl.planMove(root, captured.id, { state: "00-inbox", ifDue: true }).content, undefined);
@@ -646,13 +646,13 @@ test("scheduled cards can reopen early, consume the date and keep literal body m
   assert.deepEqual(reopened.occurrences.map((entry) => entry.event), ["opened"]);
   assert.equal(reopened.body, osl.parseTask(valid, "90-archive/1.md", board).body);
   assert.equal(osl.parseTask(content, "90-archive/1.md", board).reopen, null);
-  assert.match(osl.parseTask(valid.replace("# Scheduled", "[reopen:2090-12-02]\n\n# Scheduled"), "90-archive/1.md", board).errors.join("; "), /at most one reopen/);
+  assert.match(osl.parseTask(valid.replace("# Scheduled", "[recur::reopen:2090-12-02]\n\n# Scheduled"), "90-archive/1.md", board).errors.join("; "), /at most one reopen/);
 });
 
 test("active moves and archive reordering keep history; reopening and closing start a fresh interval", (t) => {
   const root = fixture(t);
   const captured = osl.capture(root, { title: "Lifecycle", body: "Instructions" });
-  fs.writeFileSync(captured.path, fs.readFileSync(captured.path, "utf8").replace("# Lifecycle", "[repeat:1w]\n[reopen:2090-12-01]\n\n# Lifecycle"));
+  fs.writeFileSync(captured.path, fs.readFileSync(captured.path, "utf8").replace("# Lifecycle", "[recur::repeat:1w]\n[recur::reopen:2090-12-01]\n\n# Lifecycle"));
   assert.equal(osl.planMove(root, captured.id, { state: "10-next" }).content, undefined);
   let plan = osl.planMove(root, captured.id, { state: "90-archive" });
   const archived = path.join(root, plan.target);
@@ -680,24 +680,24 @@ test("active moves and archive reordering keep history; reopening and closing st
 test("validation rejects contradictory scheduling metadata and history", (t) => {
   const errors = (header, state = "90-archive") => osl.parseTask(
     `[id:1]\n[tag:space::home]\n${header}\n\n# Validation\n`, `${state}/1.md`, board).errors;
-  const closed = "[closed:2026-11-17T19:00:00.000Z]";
-  const opened = "[opened:2026-11-18T19:00:00.000Z]";
-  assert.match(errors("[tag:recurring]\n[repeat:7d]", "00-inbox").join("; "), /redundant recurring tag/);
-  assert.match(errors("[repeat:7d]").join("; "), /needs a closing event or reopening date/);
-  assert.match(errors(`[repeat:7d]\n${opened}`).join("; "), /does not match the workflow column/);
-  assert.match(errors(`[repeat:7d]\n${closed}`, "00-inbox").join("; "), /does not match the workflow column/);
-  assert.match(errors(`[reopen:2090-12-01]\n${opened}`).join("; "), /does not match the workflow column/);
-  assert.match(errors(`[repeat:7d]\n${opened}\n${closed}`).join("; "), /must not go backwards/);
-  assert.match(errors(`[repeat:7d]\n${closed}\n${closed}`).join("; "), /must alternate/);
-  assert.deepEqual(errors("[repeat:7d]", "00-inbox"), []);
-  assert.deepEqual(errors("[repeat:7d]\n[reopen:2090-12-01]"), []);
-  assert.deepEqual(errors(`[repeat:7d]\n${closed}`), []);
-  assert.deepEqual(errors(`[repeat:7d]\n${opened}`, "00-inbox"), []);
+  const closed = "[recur::closed:2026-11-17T19:00:00.000Z]";
+  const opened = "[recur::opened:2026-11-18T19:00:00.000Z]";
+  assert.match(errors("[tag:recurring]\n[recur::repeat:7d]", "00-inbox").join("; "), /redundant recurring tag/);
+  assert.match(errors("[recur::repeat:7d]").join("; "), /needs a closing event or reopening date/);
+  assert.match(errors(`[recur::repeat:7d]\n${opened}`).join("; "), /does not match the workflow column/);
+  assert.match(errors(`[recur::repeat:7d]\n${closed}`, "00-inbox").join("; "), /does not match the workflow column/);
+  assert.match(errors(`[recur::reopen:2090-12-01]\n${opened}`).join("; "), /does not match the workflow column/);
+  assert.match(errors(`[recur::repeat:7d]\n${opened}\n${closed}`).join("; "), /must not go backwards/);
+  assert.match(errors(`[recur::repeat:7d]\n${closed}\n${closed}`).join("; "), /must alternate/);
+  assert.deepEqual(errors("[recur::repeat:7d]", "00-inbox"), []);
+  assert.deepEqual(errors("[recur::repeat:7d]\n[recur::reopen:2090-12-01]"), []);
+  assert.deepEqual(errors(`[recur::repeat:7d]\n${closed}`), []);
+  assert.deepEqual(errors(`[recur::repeat:7d]\n${opened}`, "00-inbox"), []);
   assert.deepEqual(errors(closed, "00-inbox"), [], "stopping a rule preserves its old history");
   const root = fixture(t);
   const task = osl.capture(root, { title: "Clock skew" });
   const content = fs.readFileSync(task.path, "utf8")
-    .replace("# Clock skew", "[repeat:7d]\n[opened:2090-01-01T00:00:00.000Z]\n\n# Clock skew");
+    .replace("# Clock skew", "[recur::repeat:7d]\n[recur::opened:2090-01-01T00:00:00.000Z]\n\n# Clock skew");
   fs.writeFileSync(task.path, content);
   assert.throws(() => osl.planMove(root, task.id, { state: "90-archive" }), /must not go backwards/);
   assert.equal(fs.readFileSync(task.path, "utf8"), content);
@@ -731,7 +731,7 @@ test("deferral preserves the open cycle through either configured column and sta
   for (const column of config.reopenColumns) {
     const captured = osl.capture(root, { title: "Postpone", state: "90-archive", body: "Personal notes remain" });
     fs.writeFileSync(captured.path, fs.readFileSync(captured.path, "utf8")
-      .replace("# Postpone", "[repeat:7d]\n[closed:2020-01-01T00:00:00.000Z]\n\n# Postpone"));
+      .replace("# Postpone", "[recur::repeat:7d]\n[recur::closed:2020-01-01T00:00:00.000Z]\n\n# Postpone"));
     const read = () => osl.snapshot(root).tasks.find((task) => task.id === captured.id);
     apply(osl.planMove(root, captured.id, { state: "00-inbox", ifDue: true }));
     const opened = read();
@@ -765,7 +765,7 @@ test("manual reopening into a deferred column retains its date until activation"
   const root = fixture(t);
   fs.writeFileSync(path.join(root, ".board.json"), JSON.stringify({ ...board, reopenColumns: ["10-next", "10-waiting"] }));
   const captured = osl.capture(root, { title: "Later", state: "90-archive" });
-  fs.writeFileSync(captured.path, fs.readFileSync(captured.path, "utf8").replace("# Later", "[reopen:2090-12-01]\n\n# Later"));
+  fs.writeFileSync(captured.path, fs.readFileSync(captured.path, "utf8").replace("# Later", "[recur::reopen:2090-12-01]\n\n# Later"));
   let plan = osl.planMove(root, captured.id, { state: "10-next" });
   let task = osl.parseTask(plan.content, plan.target, osl.readConfig(root));
   assert.equal(task.reopen, "2090-12-01");
@@ -784,4 +784,33 @@ test("an explicit date never pulls a card already in Inbox or an unconfigured co
   for (const state of ["inbox", "progress", "waiting"]) assert.equal(isReady({ ...task, state }, board), false);
   for (const state of ["archive", "backlog", "shortlist"]) assert.equal(isReady({ ...task, state }, board), true);
   assert.equal(isReady({ ...task, state: "backlog", reopen: null, repeat: "7d" }, board), false);
+});
+
+test("recurrence fields require their namespace and reject unknown names", () => {
+  const header = "[id:1]\n[tag:space::home]\n";
+  const config = { ...board, spaces: ["home"] };
+  for (const [key, value] of [["repeat", "2w"], ["reopen", "2090-12-01"],
+    ["opened", "2020-01-01T00:00:00.000Z"], ["closed", "2020-01-01T00:00:00.000Z"]]) {
+    const errors = osl.parseTask(`${header}[${key}:${value}]\n\n# Old syntax`, "00-inbox/1.md", config).errors;
+    assert.ok(errors.some((message) => message.includes(`Use [recur::${key}:...]`)));
+  }
+  assert.match(osl.parseTask(`${header}[recur::due:2090-12-01]\n\n# Unknown`, "00-inbox/1.md", config)
+    .errors.join("; "), /Unsupported recurrence metadata/);
+});
+
+test("archived cards expose the next return day in Moscow with explicit dates taking priority", (t) => {
+  const root = fixture(t);
+  const captured = osl.capture(root, { title: "Next date", state: "90-archive" });
+  const original = fs.readFileSync(captured.path, "utf8");
+  const content = original.replace("# Next date", "[recur::repeat:1d]\n[recur::closed:2026-11-17T22:00:00.000Z]\n\n# Next date");
+  const read = () => osl.snapshot(root).tasks.find((task) => task.id === captured.id);
+  fs.writeFileSync(captured.path, content);
+  assert.equal(read().nextReopen, "2026-11-19");
+  fs.writeFileSync(captured.path, content.replace("# Next date", "[recur::reopen:2090-12-01]\n\n# Next date"));
+  assert.equal(read().nextReopen, "2090-12-01");
+  fs.writeFileSync(captured.path, content.replace("# Next date", "[tag:closure::cancelled]\n\n# Next date"));
+  assert.equal(read().nextReopen, null);
+  const active = osl.capture(root, { title: "Open cycle" });
+  fs.writeFileSync(active.path, fs.readFileSync(active.path, "utf8").replace("# Open cycle", "[recur::repeat:1d]\n\n# Open cycle"));
+  assert.equal(osl.snapshot(root).tasks.find((task) => task.id === active.id).nextReopen, null);
 });

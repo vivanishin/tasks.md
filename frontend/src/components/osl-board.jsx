@@ -411,7 +411,8 @@ export default function OslBoard() {
       revision: task.revision, ...content,
     }).then((result) => {
       if (!/^[a-f0-9]{64}$/.test(result?.revision)) throw new Error("Нет подтверждения версии файла");
-      const saved = { ...task, ...content, revision: result.revision };
+      const saved = { ...task, ...content, path: result.path ?? task.path,
+        state: result.state ?? task.state, revision: result.revision };
       setEditing(saved);
       setData((previous) => ({ ...previous, git: result.git,
         tasks: previous.tasks.map((item) => item.path === task.path ? { ...item, ...saved } : item),
@@ -573,10 +574,11 @@ export default function OslBoard() {
           <For each={displayedTags(task())}>{(tag) => <span>{` · ${tag}`}</span>}</For>
         </p>
         <Show when={task().repeat}><p>Повтор: {task().repeat}</p></Show>
-        <Show when={task().reopen}><p>Открыть: {task().reopen}</p></Show>
+        <Show when={task().reopen}><p>Вернуть в Inbox: {task().reopen}</p></Show>
+        <Show when={task().nextReopen && !task().reopen}><p>Следующий возврат: {task().nextReopen}</p></Show>
         <Show when={task().occurrences?.length}>
-          <details><summary>История</summary>
-            <For each={task().occurrences}>{(entry) => <p>{entry.event === "closed" ? "Закрыто" : "Открыто"}: {entry.at.slice(0, 16).replace("T", " ")}</p>}</For>
+          <details class="osl-task-history"><summary>История</summary>
+            <For each={task().occurrences}>{(entry) => <p>{entry.event === "closed" ? "Закрыто" : "Переоткрыто"}: {entry.at.slice(0, 16).replace("T", " ")}</p>}</For>
           </details>
         </Show>
         <Show when={task().due}><p>Срок / пересмотр: {task().due}</p></Show>

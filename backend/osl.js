@@ -3,6 +3,8 @@ const path = require("node:path");
 const { createHash, randomUUID } = require("node:crypto");
 
 const recurrence = require("./osl-recurrence");
+const runFile = require("node:util").promisify(require("node:child_process").execFile);
+const pendingChecks = new Map();
 
 const ID = /^[1-9][0-9]*$/;
 const dateValid = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value)
@@ -77,7 +79,16 @@ function parseTask(content, relativePath, config) {
   const errors = [];
   const heading = /^# (.+)\r?$/m.exec(content);
   const header = heading ? content.slice(0, heading.index) : content;
-  const markers = [...header.matchAll(/\[([a-z-]+):([^\]\r\n]*)\]/g)];
+  const recurKeys = ["repeat", "reopen", "opened", "closed"];
+  const markers = [...header.matchAll(/\[([a-z-]+(?:::[a-z-]+)?):([^\]\r\n]*)\]/g)]
+    .map(([marker, key, value]) => {
+      if (recurKeys.includes(key)) errors.push(`Use [recur::${key}:...] instead of [${key}:...]`);
+      if (key.startsWith("recur::")) {
+        if (!recurKeys.includes(key.slice(7))) errors.push(`Unsupported recurrence metadata: ${key}`);
+        key = key.slice(7);
+      }
+      return [marker, key, value];
+    });
   const fields = new Map();
   for (const [, key, value] of markers) {
     if (!fields.has(key)) fields.set(key, []);
@@ -86,7 +97,7 @@ function parseTask(content, relativePath, config) {
       errors.push(`Unsupported metadata: ${key}`);
     }
   }
-  if (header.replace(/\[([a-z-]+):([^\]\r\n]*)\]/g, "").trim()) {
+  if (header.replace(/\[([a-z-]+(?:::[a-z-]+)?):([^\]\r\n]*)\]/g, "").trim()) {
     errors.push("Unrecognized text in metadata header");
   }
   const single = (key, required = false) => {
@@ -229,6 +240,7 @@ function snapshot(root) {
       else if (ids.get(reference).length > 1) task.errors.push(`Ambiguous reference osl:${reference}`);
     }
     task.errors.forEach((message) => issues.push({ path: task.path, message }));
+    task.nextReopen = !task.errors.length && task.state === config?.archiveColumn ? recurrence.nextDate(task) : null;
   }
   let nextId = null;
   let allocatorValid = true;
@@ -256,6 +268,30 @@ function snapshot(root) {
     webDefaults: config?.webDefaults || null,
     archiveState: config?.archiveColumn || null, captureState: config?.captureColumn || null,
     reopenStates: config?.reopenColumns || [], nextId, allocationSafe, tasks, issues };
+}
+
+async function refresh(root) {
+  let current = snapshot(root);
+  if (process.env.OSL_RECUR_SKIP === "true") return current;
+  let pending = pendingChecks.get(root);
+  if (!pending) {
+    if (current.issues.length || !current.tasks.some((task) => recurrence.isReady(task, current))) return current;
+    pending = (async () => {
+      if (!process.env.OSL_HELPER) throw new Error("Configure OSL_HELPER for automatic reopening");
+      await runFile(process.env.OSL_HELPER, ["recur"], { env: { ...process.env,
+        OSL_TASKS: root, OSL_APP: path.join(__dirname, ".."), OSL_NODE: process.execPath,
+        OSL_RECUR_SKIP: "true", GIT_TERMINAL_PROMPT: "0" } });
+    })();
+    pendingChecks.set(root, pending);
+  }
+  try { await pending; current = snapshot(root); }
+  catch (error) {
+    current = snapshot(root);
+    current.issues.push({ path: "recurring", message: error.stderr?.trim() || error.message });
+  } finally {
+    if (pendingChecks.get(root) === pending) pendingChecks.delete(root);
+  }
+  return current;
 }
 
 function planMove(root, reference, { state, before, ifDue = false, reopen }) {
@@ -388,7 +424,7 @@ function capture(root, { title, space, tags = [], body = "", state }) {
   } finally { fs.rmdirSync(lock); }
 }
 
-function main(args) {
+async function main(args) {
   let root = process.env.TASKS_DIR;
   if (args[0] === "--root") { root = args[1]; args = args.slice(2); }
   if (!root) throw new Error("Specify --root TASKS_DIR");
@@ -406,8 +442,22 @@ function main(args) {
     if (result.issues.length) process.exitCode = 1;
     return;
   }
-  if (command === "lookup" && args.length === 1) return process.stdout.write(`${lookup(root, args[0])}\n`);
-  if (command === "snapshot" && !args.length) return process.stdout.write(`${JSON.stringify(snapshot(root))}\n`);
+  if (command === "lookup" && args.length === 1) {
+    const current = await refresh(root);
+    current.issues.forEach((issue) => process.stderr.write(`${issue.path}: ${issue.message}\n`));
+    return process.stdout.write(`${lookup(root, args[0])}\n`);
+  }
+  if (command === "snapshot" && !args.length) return process.stdout.write(`${JSON.stringify(await refresh(root))}\n`);
+  if (command === "refresh" && args.length <= 1) {
+    const current = await refresh(root);
+    current.issues.forEach((issue) => process.stderr.write(`${issue.path}: ${issue.message}\n`));
+    if (args.length) {
+      const task = current.tasks.find((task) => `osl:${task.id}` === args[0] || task.id === args[0]);
+      if (!task) throw new Error("Saved card is missing after automatic reopening");
+      process.stdout.write(`${JSON.stringify({ revision: task.revision, path: task.path, state: task.state })}\n`);
+    }
+    return;
+  }
   if (command === "due" && !args.length) {
     const current = snapshot(root);
     if (current.issues.length) throw new Error("Run validate before reopening recurring tasks");
@@ -439,13 +489,15 @@ function main(args) {
       if (key === "--tag") options.tags.push(value);
       else options[key.slice(2)] = value;
     }
-    return process.stdout.write(`${JSON.stringify(capture(root, options))}\n`);
+    const task = capture(root, options);
+    const current = await refresh(root);
+    current.issues.forEach((issue) => process.stderr.write(`${issue.path}: ${issue.message}\n`));
+    return process.stdout.write(`${JSON.stringify(task)}\n`);
   }
   throw new Error("Usage: osl.js --root DIR init|config|validate|snapshot|lookup NUMBER_OR_REFERENCE|capture --title TITLE [--space SPACE] [--tag TAG] [--state STATE] [--body TEXT]");
 }
 
-module.exports = { readConfig, readOrder, parseTask, snapshot, planMove, lookup, init, capture, edit };
+module.exports = { readConfig, readOrder, parseTask, snapshot, refresh, planMove, lookup, init, capture, edit };
 if (require.main === module) {
-  try { main(process.argv.slice(2)); }
-  catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; }
+  main(process.argv.slice(2)).catch((error) => { process.stderr.write(`${error.message}\n`); process.exitCode = 1; });
 }

@@ -17,15 +17,15 @@ test("concurrent board reads reopen due recurring and scheduled cards once", asy
   osl.init(root);
   const task = osl.capture(root, { title: "Recurring", state: "archive", body: "Instructions" });
   fs.writeFileSync(task.path, fs.readFileSync(task.path, "utf8")
-    .replace("# Recurring", "[repeat:1d]\n[closed:2020-01-01T00:00:00.000Z]\n\n# Recurring"));
+    .replace("# Recurring", "[recur::repeat:1d]\n[recur::closed:2020-01-01T00:00:00.000Z]\n\n# Recurring"));
   const scheduled = osl.capture(root, { title: "Scheduled", state: "archive", body: "One-time instructions" });
   fs.writeFileSync(scheduled.path, fs.readFileSync(scheduled.path, "utf8")
-    .replace("# Scheduled", "[reopen:2020-01-01]\n\n# Scheduled"));
+    .replace("# Scheduled", "[recur::reopen:2020-01-01]\n\n# Scheduled"));
   const deferredIds = [];
   for (const state of ["backlog", "shortlist"]) {
     const deferred = osl.capture(root, { title: "Deferred", state, body: "Notes on current occurrence" });
     fs.writeFileSync(deferred.path, fs.readFileSync(deferred.path, "utf8")
-      .replace("# Deferred", "[repeat:7d]\n[reopen:2020-01-01]\n[opened:2020-01-01T00:00:00.000Z]\n\n# Deferred"));
+      .replace("# Deferred", "[recur::repeat:7d]\n[recur::reopen:2020-01-01]\n[recur::opened:2020-01-01T00:00:00.000Z]\n\n# Deferred"));
     deferredIds.push(deferred.id);
   }
   const git = (...args) => {
@@ -82,8 +82,25 @@ test("concurrent board reads reopen due recurring and scheduled cards once", asy
   assert.deepEqual(postponed.occurrences, repeated.occurrences);
   assert.equal((await patch(target, { newPath: target, reopen: "2026-02-30" })).status, 409);
   assert.equal((await patch(target, { newPath: target, reopen: "2020-01-01" })).status, 204);
+  assert.equal(osl.snapshot(root).tasks.find((item) => item.id === task.id).state, "inbox", "a successful move triggers reopening without a board read");
   postponed = (await (await fetch(url)).json()).tasks.find((item) => item.id === task.id);
   assert.equal(postponed.state, "inbox");
   assert.equal(postponed.reopen, null);
   assert.deepEqual(postponed.occurrences, repeated.occurrences);
+
+  const editCard = osl.capture(root, { title: "Edit at deadline", state: "shortlist", body: "Original" });
+  fs.writeFileSync(editCard.path, fs.readFileSync(editCard.path, "utf8")
+    .replace("# Edit at deadline", "[recur::repeat:7d]\n[recur::reopen:2020-01-01]\n\n# Edit at deadline"));
+  git("add", "."); git("commit", "-qm", "Prepare editing");
+  const editing = osl.snapshot(root).tasks.find((item) => item.id === editCard.id);
+  const saved = await patch(editing.path, { revision: editing.revision, title: editing.title, body: "Saved at deadline" });
+  assert.equal(saved.status, 200);
+  const confirmation = await saved.json();
+  const activated = osl.snapshot(root).tasks.find((item) => item.id === editCard.id);
+  assert.equal(activated.state, "inbox");
+  assert.equal(activated.reopen, null);
+  assert.equal(confirmation.path, activated.path);
+  assert.equal(confirmation.state, activated.state);
+  assert.equal(confirmation.revision, activated.revision);
+  assert.equal((await patch(confirmation.path, { revision: confirmation.revision, title: editing.title, body: "Next autosave" })).status, 200);
 });
