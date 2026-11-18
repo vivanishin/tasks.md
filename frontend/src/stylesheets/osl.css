@@ -31,9 +31,11 @@ dialog.osl-detail { width: min(900px, 95vw); height: auto; max-height: 90dvh; bo
 .osl-detail::backdrop { background: rgb(0 0 0 / .55); }
 .osl-detail header { display: flex; gap: 1rem; justify-content: space-between; align-items: start; }
 .osl-detail h2 { margin: 0; font-size: 1.3rem; overflow-wrap: anywhere; }
-.osl-copy > button, .osl-copy-options > summary, .osl-open-emacs { display: inline-flex; align-items: center; box-sizing: border-box; height: 32px; gap: .4rem; }
-.osl-copy-options > button { display: block; width: 100%; margin-top: .3rem; text-align: start; }
-.osl-copy-options > summary { cursor: pointer; padding: 4px 15px; border-radius: 6px; background: var(--color-background-4); }
+.osl-copy > button, .osl-open-emacs { display: inline-flex; align-items: center; box-sizing: border-box; height: 32px; gap: .4rem; }
+.osl-copy-options { position: relative; }
+.osl-copy-options > summary { box-sizing: border-box; cursor: pointer; border-radius: 6px; background: var(--color-background-4); }
+.osl-copy-menu { position: absolute; z-index: 1; top: calc(100% + .25rem); right: 0; width: max-content; max-width: calc(100vw - 2rem); padding: .25rem; border: 1px solid var(--color-background-4); border-radius: 6px; background: var(--color-background-2); box-shadow: 0 .25rem 1rem rgb(0 0 0 / .3); }
+.osl-copy-menu > button { display: block; box-sizing: border-box; width: 100%; text-align: start; }
 .osl-copy { display: flex; flex-wrap: wrap; align-items: start; gap: .5rem; }
 .osl-task-meta { overflow-wrap: anywhere; line-height: 1.5; }
 .osl-task-history { margin-bottom: 1rem; }

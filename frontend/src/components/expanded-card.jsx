@@ -28,6 +28,7 @@ import { addTagToContent, removeTagFromContent, setDueDateInContent, getDueDateF
  * @param {boolean} props.readOnly Render the rich-text editor without editing controls
  * @param {boolean} props.sourceMode Edit Markdown without a rich-text round trip
  * @param {Object} props.editorOptions Additional Stacks Editor options
+ * @param {Element} props.toolbarSlot Optional actions before expand and close
  * @param {Element} props.metadataSlot Optional card metadata and actions
  * @param {Element} props.footerSlot Optional card footer
  * @param {string} props.name Card name
@@ -425,6 +426,7 @@ function ExpandedCard(props) {
                 </h1>
               </div>
               <div class="dialog__toolbar-btns">
+                {props.toolbarSlot}
                 <button
                   type="button"
                   class="dialog__toolbar-btn"

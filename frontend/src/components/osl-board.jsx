@@ -1,10 +1,11 @@
 import { createSignal, createMemo, createEffect, onMount, onCleanup, lazy, For, Show } from "solid-js";
-import { IconPencil, IconCopy } from "@stackoverflow/stacks-icons/icons";
+import { IconPencil, IconCopy, IconEllipsisVertical } from "@stackoverflow/stacks-icons/icons";
 import { Portal } from "solid-js/web";
 import { Card } from "./card";
 import { oslEditorPlugin } from "../osl-editor.mjs";
 import { DragAndDrop } from "./drag-and-drop";
 import { api } from "../api";
+import { clickOutside } from "../utils";
 import { useI18n } from "../i18n";
 import { visibleTags, markdownLink, taskFilePath } from "../osl-content.mjs";
 import { defaultSpaceFor } from "../osl-default-space.mjs";
@@ -136,6 +137,7 @@ export default function OslBoard() {
   const [showAllTags, setShowAllTags] = createSignal(false);
   const [reference, setReference] = createSignal("");
   const [copyStatus, setCopyStatus] = createSignal("");
+  let copyMenu;
   const [refreshed, setRefreshed] = createSignal("");
   const { t, locale } = useI18n();
   const working = () => busy() || moving() || pushing() || creating() || saving();
@@ -568,6 +570,21 @@ export default function OslBoard() {
         dialogLabel="Задача OSL" name={task().title} content={mode === "edit" ? editing()?.body ?? task().body : task().body} onClose={close} t={t}
         tags={[]} tagsOptions={[]}
         editorOptions={{ editorPlugins: [oslEditorPlugin], parserFeatures: { html: false, tagLinks: false } }}
+        toolbarSlot={<details class="osl-copy-options" ref={copyMenu}
+          use:clickOutside={() => { copyMenu.open = false; }}
+          onKeyDown={(event) => { if (event.key === "Escape" && event.currentTarget.open) {
+            event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false;
+            event.currentTarget.querySelector("summary").focus();
+          } }}>
+          <summary class="dialog__toolbar-btn" title="Другие варианты копирования" aria-label="Другие варианты копирования">
+            <span aria-hidden="true" innerHTML={IconEllipsisVertical} />
+          </summary>
+          <div class="osl-copy-menu" onClick={() => { copyMenu.open = false; copyMenu.querySelector("summary").focus(); }}>
+            <button type="button" onClick={() => copy(`osl:${task().id}`)}>Копировать osl:</button>
+            <button type="button" onClick={() => copy(orgLink(task()))}>Копировать Org-ссылку</button>
+            <button type="button" onClick={() => copy(markdownLink(task()))}>Копировать md-ссылку</button>
+          </div>
+        </details>}
         metadataSlot={<>
         <p class="osl-task-meta">{`osl:${task().id} · `}<TaskColumnMenu task={task()} columns={data().states}
           archiveState={data().archiveState} disabled={working() || Boolean(editing()) || task().errors.length > 0}
@@ -603,11 +620,6 @@ export default function OslBoard() {
           <a class="osl-open-emacs" href={`org-protocol://osl?reference=${encodeURIComponent(`osl:${task().id}`)}`}>Открыть в Emacs</a>
           <button type="button" title="Копировать путь к файлу" aria-label="Копировать путь к файлу" onClick={() => copy(taskFilePath(localTasksDirectory, task()))}><span aria-hidden="true" innerHTML={IconCopy} />Путь к файлу</button>
           <button type="button" title="Копировать Web-ссылку" aria-label="Копировать Web-ссылку" onClick={() => copy(`${window.location.href.split("#")[0]}#osl:${task().id}`)}><span aria-hidden="true" innerHTML={IconCopy} />Web-ссылка</button>
-          <details class="osl-copy-options"><summary><span aria-hidden="true" innerHTML={IconCopy} />Ещё…</summary>
-          <button type="button" onClick={() => copy(`osl:${task().id}`)}>Копировать osl:</button>
-          <button type="button" onClick={() => copy(orgLink(task()))}>Копировать Org-ссылку</button>
-          <button type="button" onClick={() => copy(markdownLink(task()))}>Копировать md-ссылку</button>
-          </details>
         </div>
         <p role="status">{copyStatus()}</p>
         </>}
