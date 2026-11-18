@@ -612,14 +612,14 @@ export default function OslBoard() {
         <Show when={editError()}><p class="osl-alert" role="alert" style={{ "white-space": "pre-wrap" }}>{editError()}</p></Show>
         <div class="osl-copy">
           <Show when={mode === "read"} fallback={<>
-            <button type="button" onClick={async () => { if (await finishEdit()) await refresh(); }}>Готово</button>
+            <button type="button" onClick={async () => { if (await finishEdit()) await refresh(); }}>Done</button>
             <Show when={editError()}><button type="button" onClick={() => { setEditError(""); saveEdit(); }}>Повторить</button></Show>
           </>}>
-            <button type="button" onClick={() => startEdit(task())} disabled={working() || task().errors.length > 0}><span aria-hidden="true" innerHTML={IconPencil} />Редактировать</button>
+            <button type="button" onClick={() => startEdit(task())} disabled={working() || task().errors.length > 0}><span aria-hidden="true" innerHTML={IconPencil} />Edit</button>
           </Show>
-          <a class="osl-open-emacs" href={`org-protocol://osl?reference=${encodeURIComponent(`osl:${task().id}`)}`}>Открыть в Emacs</a>
-          <button type="button" title="Копировать путь к файлу" aria-label="Копировать путь к файлу" onClick={() => copy(taskFilePath(localTasksDirectory, task()))}><span aria-hidden="true" innerHTML={IconCopy} />Путь к файлу</button>
-          <button type="button" title="Копировать Web-ссылку" aria-label="Копировать Web-ссылку" onClick={() => copy(`${window.location.href.split("#")[0]}#osl:${task().id}`)}><span aria-hidden="true" innerHTML={IconCopy} />Web-ссылка</button>
+          <a class="osl-open-emacs" href={`org-protocol://osl?reference=${encodeURIComponent(`osl:${task().id}`)}`}>Emacs</a>
+          <button type="button" title="Копировать путь к файлу" aria-label="Копировать путь к файлу" onClick={() => copy(taskFilePath(localTasksDirectory, task()))}><span aria-hidden="true" innerHTML={IconCopy} />Realpath</button>
+          <button type="button" title="Копировать Web-ссылку" aria-label="Копировать Web-ссылку" onClick={() => copy(`${window.location.href.split("#")[0]}#osl:${task().id}`)}><span aria-hidden="true" innerHTML={IconCopy} />Weblink</button>
         </div>
         <p role="status">{copyStatus()}</p>
         </>}
