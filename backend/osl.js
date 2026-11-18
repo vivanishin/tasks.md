@@ -50,7 +50,7 @@ function readConfig(root) {
   if (!fs.lstatSync(filename).isFile()) throw new Error(".board.json must be a regular file");
   const config = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(fs.readFileSync(filename)));
   if (!config || Array.isArray(config) || typeof config !== "object") throw new Error("Expected a board configuration object");
-  const keys = ["columns", "spaces", "captureColumn", "defaultSpace", "archiveColumn", "webDefaults"];
+  const keys = ["columns", "spaces", "captureColumn", "defaultSpace", "archiveColumn", "webDefaults", "reopenColumns"];
   if (Object.keys(config).some((key) => !keys.includes(key))) throw new Error("Unknown board configuration property");
   const valuesValid = (values, valid) => Array.isArray(values) && values.length > 0
     && values.every((value) => typeof value === "string" && valid(value))
@@ -62,6 +62,12 @@ function readConfig(root) {
   if (!config.columns.includes(config.captureColumn)) throw new Error("captureColumn must name a configured column");
   if (!config.columns.includes(config.archiveColumn)) throw new Error("archiveColumn must name a configured column");
   if (config.captureColumn === config.archiveColumn) throw new Error("Capture and archive columns must differ");
+  if (config.reopenColumns !== undefined && (!Array.isArray(config.reopenColumns)
+      || new Set(config.reopenColumns).size !== config.reopenColumns.length
+      || config.reopenColumns.some((column) => !config.columns.includes(column)
+        || [config.captureColumn, config.archiveColumn].includes(column)))) {
+    throw new Error("reopenColumns must list distinct configured columns other than capture and archive");
+  }
   if (!config.spaces.includes(config.defaultSpace)) throw new Error("defaultSpace must name a configured Space");
   validateWebDefaults(config.webDefaults, config.spaces);
   return config;
@@ -248,19 +254,22 @@ function snapshot(root) {
   return { schemaVersion: 1, states: config?.columns || [], spaces: config?.spaces || [],
     defaultSpace: config?.defaultSpace || null,
     webDefaults: config?.webDefaults || null,
-    archiveState: config?.archiveColumn || null, nextId, allocationSafe, tasks, issues };
+    archiveState: config?.archiveColumn || null, captureState: config?.captureColumn || null,
+    reopenStates: config?.reopenColumns || [], nextId, allocationSafe, tasks, issues };
 }
 
-function planMove(root, reference, { state, before, ifDue = false }) {
+function planMove(root, reference, { state, before, ifDue = false, reopen }) {
   const current = snapshot(root);
   if (current.issues.length) throw new Error("Run validate and resolve task-store issues before moving cards");
   const match = /^(?:osl:)?([1-9][0-9]*)$/.exec(reference);
   const task = current.tasks.find((task) => task.id === match?.[1]);
   if (!task) throw new Error(`Unknown or invalid reference ${reference}`);
   if (!current.states.includes(state)) throw new Error("Unknown target column");
+  if (reopen !== undefined && !dateValid(reopen)) throw new Error("Expected a reopening date in YYYY-MM-DD format");
   if (ifDue) {
-    if (task.state !== current.archiveState || !recurrence.isDue(task)) return { source: task.path, target: task.path, order: null };
-    if (state !== readConfig(root).captureColumn) throw new Error("Recurring tasks must reopen in the capture column");
+    if (reopen !== undefined) throw new Error("Cannot set a reopening date during automatic reopening");
+    if (!recurrence.isReady(task, current)) return { source: task.path, target: task.path, order: null };
+    if (state !== current.captureState) throw new Error("Scheduled tasks must reopen in the capture column");
     before = current.tasks.find((item) => item.state === state)?.id ?? null;
   }
   const destination = current.tasks.filter((item) => item.state === state && item.id !== task.id).map((item) => item.id);
@@ -269,7 +278,7 @@ function planMove(root, reference, { state, before, ifDue = false }) {
   }
   const order = Object.assign(Object.create(null), readOrder(root, readConfig(root)));
   const result = { source: task.path, target: `${state}/${path.basename(task.path)}`, order: null };
-  const content = recurrence.transition(root, task, state, current.archiveState);
+  const content = recurrence.transition(root, task, state, readConfig(root), reopen);
   if (content !== null) {
     const errors = parseTask(content, result.target, readConfig(root)).errors;
     if (errors.length) throw new Error(errors.join("; "));
@@ -402,7 +411,7 @@ function main(args) {
   if (command === "due" && !args.length) {
     const current = snapshot(root);
     if (current.issues.length) throw new Error("Run validate before reopening recurring tasks");
-    return process.stdout.write(current.tasks.filter((task) => task.state === current.archiveState && recurrence.isDue(task))
+    return process.stdout.write(current.tasks.filter((task) => recurrence.isReady(task, current))
       .map((task) => task.id).join("\n"));
   }
   if (command === "plan-move") {
@@ -413,8 +422,9 @@ function main(args) {
       if (key === "--if-due" && !options.ifDue) { options.ifDue = true; continue; }
       if (key === "--last" && options.before === undefined) { options.before = null; continue; }
       const value = args.shift();
-      if (!value || !["--to", "--before"].includes(key)) throw new Error(`Invalid move option ${key}`);
+      if (!value || !["--to", "--before", "--reopen"].includes(key)) throw new Error(`Invalid move option ${key}`);
       if (key === "--to" && options.state === undefined) options.state = value;
+      else if (key === "--reopen" && options.reopen === undefined) options.reopen = value;
       else if (key === "--before" && options.before === undefined && /^(?:osl:)?[1-9][0-9]*$/.test(value)) options.before = value.replace(/^osl:/, "");
       else throw new Error(`Invalid or repeated move option ${key}`);
     }

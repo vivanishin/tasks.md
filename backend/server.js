@@ -82,7 +82,7 @@ if (OSL_READ_ONLY) {
       if (ctx.path === `${apiPath}/osl`) {
         try {
           let current = osl.snapshot(TASKS_DIR);
-          if (current.tasks.some((task) => !task.errors.length && task.state === current.archiveState && recurrence.isDue(task))) {
+          if (current.tasks.some((task) => !task.errors.length && recurrence.isReady(task, current))) {
             try { await runHelper(["recur"]); current = osl.snapshot(TASKS_DIR); }
             catch (error) { current = osl.snapshot(TASKS_DIR); current.issues.push({ path: "recurring", message: error.stderr?.trim() || error.message }); }
           }
@@ -280,7 +280,8 @@ async function updateResource(ctx) {
       return;
     }
     const parts = typeof body?.newPath === "string" ? body.newPath.replace(/^\//, "").split("/") : [];
-    if (!ctx.is("application/json") || Object.keys(body || {}).some((key) => !["newPath", "before"].includes(key))
+    if (!ctx.is("application/json") || Object.keys(body || {}).some((key) => !["newPath", "before", "reopen"].includes(key))
+        || (Object.hasOwn(body || {}, "reopen") && typeof body.reopen !== "string")
         || (Object.hasOwn(body || {}, "before") && body.before !== null
           && (typeof body.before !== "string" || !/^[1-9][0-9]*$/.test(body.before)))
         || !task?.id || parts.length !== 2 || parts[1] !== oldPath.split("/").at(-1)
@@ -290,6 +291,7 @@ async function updateResource(ctx) {
       return;
     }
     const args = ["move", `osl:${task.id}`, "--to", parts[0]];
+    if (Object.hasOwn(body, "reopen")) args.push("--reopen", body.reopen);
     if (Object.hasOwn(body, "before")) {
       args.push(...(body.before === null ? ["--last"] : ["--before", body.before]));
     }

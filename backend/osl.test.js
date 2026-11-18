@@ -702,3 +702,86 @@ test("validation rejects contradictory scheduling metadata and history", (t) => 
   assert.throws(() => osl.planMove(root, task.id, { state: "90-archive" }), /must not go backwards/);
   assert.equal(fs.readFileSync(task.path, "utf8"), content);
 });
+
+test("reopening sources are configured and cannot include the destination or archive", (t) => {
+  const root = fixture(t);
+  const filename = path.join(root, ".board.json");
+  for (const reopenColumns of [[], ["10-next", "10-waiting"]]) {
+    fs.writeFileSync(filename, JSON.stringify({ ...board, reopenColumns }));
+    assert.deepEqual(osl.readConfig(root).reopenColumns, reopenColumns);
+    assert.deepEqual(osl.snapshot(root).reopenStates, reopenColumns);
+  }
+  for (const reopenColumns of [null, "10-next", ["missing"], ["00-inbox"], ["90-archive"], ["10-next", "10-next"]]) {
+    fs.writeFileSync(filename, JSON.stringify({ ...board, reopenColumns }));
+    assert.throws(() => osl.readConfig(root), /reopenColumns/);
+  }
+});
+
+test("deferral preserves the open cycle through either configured column and starts the next interval only on closure", (t) => {
+  const root = fixture(t);
+  const config = { ...board, reopenColumns: ["10-next", "10-waiting"] };
+  fs.writeFileSync(path.join(root, ".board.json"), JSON.stringify(config));
+  const apply = (plan) => {
+    const source = path.join(root, plan.source), target = path.join(root, plan.target);
+    fs.writeFileSync(target, plan.content ?? fs.readFileSync(source));
+    if (source !== target) fs.unlinkSync(source);
+    if (plan.order) fs.writeFileSync(path.join(root, ".order.json"), JSON.stringify(plan.order));
+  };
+  const { isReady } = require("./osl-recurrence");
+  for (const column of config.reopenColumns) {
+    const captured = osl.capture(root, { title: "Postpone", state: "90-archive", body: "Personal notes remain" });
+    fs.writeFileSync(captured.path, fs.readFileSync(captured.path, "utf8")
+      .replace("# Postpone", "[repeat:7d]\n[closed:2020-01-01T00:00:00.000Z]\n\n# Postpone"));
+    const read = () => osl.snapshot(root).tasks.find((task) => task.id === captured.id);
+    apply(osl.planMove(root, captured.id, { state: "00-inbox", ifDue: true }));
+    const opened = read();
+    apply(osl.planMove(root, captured.id, { state: column, reopen: "2090-12-01" }));
+    assert.deepEqual(read().occurrences, opened.occurrences);
+    assert.equal(read().repeat, "7d");
+    assert.equal(read().body, opened.body);
+    assert.equal(isReady(read(), osl.snapshot(root)), false);
+    assert.equal(osl.planMove(root, captured.id, { state: "00-inbox", ifDue: true }).content, undefined);
+    assert.throws(() => osl.planMove(root, captured.id, { state: "00-inbox", reopen: "2026-02-30" }), /reopening date/);
+    apply(osl.planMove(root, captured.id, { state: column, reopen: "2020-01-01" }));
+    assert.equal(isReady(read(), osl.snapshot(root)), true);
+    apply(osl.planMove(root, captured.id, { state: "00-inbox", ifDue: true }));
+    assert.equal(read().reopen, null);
+    assert.deepEqual(read().occurrences, opened.occurrences, "returning an open cycle does not open another one");
+    const head = read().revision;
+    assert.equal(osl.planMove(root, captured.id, { state: "00-inbox", ifDue: true }).content, undefined);
+    assert.equal(read().revision, head);
+    apply(osl.planMove(root, captured.id, { state: column, reopen: "2090-12-01" }));
+    apply(osl.planMove(root, captured.id, { state: "90-archive" }));
+    const completed = read();
+    assert.equal(completed.reopen, null, "completion consumes the old deferral date");
+    assert.deepEqual(completed.occurrences.map((entry) => entry.event), ["closed", "opened", "closed"]);
+    const due = Date.parse(completed.occurrences.at(-1).at) + 7 * 86400000;
+    assert.equal(isReady(completed, osl.snapshot(root), due - 1), false);
+    assert.equal(isReady(completed, osl.snapshot(root), due), true);
+  }
+});
+
+test("manual reopening into a deferred column retains its date until activation", (t) => {
+  const root = fixture(t);
+  fs.writeFileSync(path.join(root, ".board.json"), JSON.stringify({ ...board, reopenColumns: ["10-next", "10-waiting"] }));
+  const captured = osl.capture(root, { title: "Later", state: "90-archive" });
+  fs.writeFileSync(captured.path, fs.readFileSync(captured.path, "utf8").replace("# Later", "[reopen:2090-12-01]\n\n# Later"));
+  let plan = osl.planMove(root, captured.id, { state: "10-next" });
+  let task = osl.parseTask(plan.content, plan.target, osl.readConfig(root));
+  assert.equal(task.reopen, "2090-12-01");
+  assert.deepEqual(task.occurrences.map((entry) => entry.event), ["opened"]);
+  fs.writeFileSync(path.join(root, plan.target), plan.content); fs.unlinkSync(captured.path);
+  plan = osl.planMove(root, captured.id, { state: "20-week" });
+  task = osl.parseTask(plan.content, plan.target, osl.readConfig(root));
+  assert.equal(task.reopen, null);
+  assert.deepEqual(task.occurrences.map((entry) => entry.event), ["opened"]);
+});
+
+test("an explicit date never pulls a card already in Inbox or an unconfigured column", () => {
+  const { isReady } = require("./osl-recurrence");
+  const board = { archiveState: "archive", captureState: "inbox", reopenStates: ["backlog", "shortlist"] };
+  const task = { tags: [], reopen: "2020-01-01" };
+  for (const state of ["inbox", "progress", "waiting"]) assert.equal(isReady({ ...task, state }, board), false);
+  for (const state of ["archive", "backlog", "shortlist"]) assert.equal(isReady({ ...task, state }, board), true);
+  assert.equal(isReady({ ...task, state: "backlog", reopen: null, repeat: "7d" }, board), false);
+});

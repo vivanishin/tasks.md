@@ -14,6 +14,7 @@ The backend starts with `OSL_READ_ONLY=true`. This restricted mode also permits
 the upstream `PATCH /_api/resource/COLUMN/FILE.md` endpoint with `newPath`
 and optional `before` (a string ID, or `null` for the end) to move or reorder
 a task while retaining its filename.
+An optional `reopen` date sets its calendar date in the same move.
 `OSL_HELPER` selects the notes helper; it runs `move osl:ID --to COLUMN`
 with optional `--before ID` or `--last`, without a shell. Success means the
 local commit completed. A separate Push

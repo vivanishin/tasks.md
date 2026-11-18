@@ -19,16 +19,31 @@ function isDue(task, now = Date.now()) {
     && last?.event === "closed" && Date.parse(last.at) + interval(task.repeat) <= now;
 }
 
-function transition(root, task, state, archive, now = new Date()) {
-  const reopening = task.state === archive;
-  if ((!task.repeat && !task.reopen) || task.state === state
-      || ![task.state, state].includes(archive)) return null;
+function isReady(task, board, now = Date.now()) {
+  return (task.state === board.archiveState || (Boolean(task.reopen) && board.reopenStates.includes(task.state)))
+    && isDue(task, now);
+}
+
+function transition(root, task, state, config, reopen, now = new Date()) {
+  const archive = config.archiveColumn;
+  const deferred = config.reopenColumns || [];
+  const crossing = task.state !== state && [task.state, state].includes(archive);
+  const event = crossing && (task.repeat || task.reopen || reopen)
+    ? state === archive ? "closed" : "opened" : null;
+  const consume = task.reopen && !deferred.includes(state)
+    && (deferred.includes(task.state) || (task.state === archive && state !== archive));
+  const nextDate = reopen ?? (consume ? null : task.reopen);
+  if (!event && nextDate === task.reopen) return null;
   const content = fs.readFileSync(path.join(root, task.path), "utf8");
   const heading = /^# /m.exec(content).index;
   let header = content.slice(0, heading).trimEnd();
-  if (reopening) header = header.replace(/\[(?:tag:closure::|reopen:)[^\]\r\n]*\][ \t]*/g, "").trimEnd();
-  const event = state === archive ? "closed" : "opened";
-  return `${header}\n[${event}:${now.toISOString()}]\n\n${content.slice(heading)}`;
+  if (nextDate !== task.reopen) {
+    header = header.replace(/\[reopen:[^\]\r\n]*\][ \t]*/g, "").trimEnd();
+    if (nextDate) header += `\n[reopen:${nextDate}]`;
+  }
+  if (event === "opened") header = header.replace(/\[tag:closure::[^\]\r\n]*\][ \t]*/g, "").trimEnd();
+  if (event) header += `\n[${event}:${now.toISOString()}]`;
+  return `${header}\n\n${content.slice(heading)}`;
 }
 
-module.exports = { interval, isDue, transition };
+module.exports = { interval, isDue, isReady, transition };
