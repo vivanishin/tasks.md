@@ -79,7 +79,10 @@ if (OSL_READ_ONLY) {
     const apiPath = `${BASE_PATH}/_api`;
     if (ctx.path === apiPath || ctx.path.startsWith(`${apiPath}/`)) {
       if (ctx.path === `${apiPath}/osl`) {
-        try { ctx.body = { ...osl.snapshot(TASKS_DIR), title: TITLE || "OSL", git: await gitStatus() }; }
+        try {
+          const current = await osl.refresh(TASKS_DIR);
+          ctx.body = { ...current, title: TITLE || "OSL", git: await gitStatus() };
+        }
         catch (error) {
           console.error(`OSL read failed (${error.code || error.name})`);
           ctx.status = 503;
@@ -274,7 +277,8 @@ async function updateResource(ctx) {
       return;
     }
     const parts = typeof body?.newPath === "string" ? body.newPath.replace(/^\//, "").split("/") : [];
-    if (!ctx.is("application/json") || Object.keys(body || {}).some((key) => !["newPath", "before"].includes(key))
+    if (!ctx.is("application/json") || Object.keys(body || {}).some((key) => !["newPath", "before", "reopen"].includes(key))
+        || (Object.hasOwn(body || {}, "reopen") && typeof body.reopen !== "string")
         || (Object.hasOwn(body || {}, "before") && body.before !== null
           && (typeof body.before !== "string" || !/^[1-9][0-9]*$/.test(body.before)))
         || !task?.id || parts.length !== 2 || parts[1] !== oldPath.split("/").at(-1)
@@ -284,6 +288,7 @@ async function updateResource(ctx) {
       return;
     }
     const args = ["move", `osl:${task.id}`, "--to", parts[0]];
+    if (Object.hasOwn(body, "reopen")) args.push("--reopen", body.reopen);
     if (Object.hasOwn(body, "before")) {
       args.push(...(body.before === null ? ["--last"] : ["--before", body.before]));
     }

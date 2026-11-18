@@ -2,6 +2,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createHash, randomUUID } = require("node:crypto");
 
+const recurrence = require("./osl-recurrence");
+const runFile = require("node:util").promisify(require("node:child_process").execFile);
+const pendingChecks = new Map();
+
 const ID = /^[1-9][0-9]*$/;
 const dateValid = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value)
   && !Number.isNaN(Date.parse(value))
@@ -48,7 +52,7 @@ function readConfig(root) {
   if (!fs.lstatSync(filename).isFile()) throw new Error(".board.json must be a regular file");
   const config = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(fs.readFileSync(filename)));
   if (!config || Array.isArray(config) || typeof config !== "object") throw new Error("Expected a board configuration object");
-  const keys = ["columns", "spaces", "captureColumn", "defaultSpace", "archiveColumn", "webDefaults"];
+  const keys = ["columns", "spaces", "captureColumn", "defaultSpace", "archiveColumn", "webDefaults", "reopenColumns"];
   if (Object.keys(config).some((key) => !keys.includes(key))) throw new Error("Unknown board configuration property");
   const valuesValid = (values, valid) => Array.isArray(values) && values.length > 0
     && values.every((value) => typeof value === "string" && valid(value))
@@ -60,6 +64,12 @@ function readConfig(root) {
   if (!config.columns.includes(config.captureColumn)) throw new Error("captureColumn must name a configured column");
   if (!config.columns.includes(config.archiveColumn)) throw new Error("archiveColumn must name a configured column");
   if (config.captureColumn === config.archiveColumn) throw new Error("Capture and archive columns must differ");
+  if (config.reopenColumns !== undefined && (!Array.isArray(config.reopenColumns)
+      || new Set(config.reopenColumns).size !== config.reopenColumns.length
+      || config.reopenColumns.some((column) => !config.columns.includes(column)
+        || [config.captureColumn, config.archiveColumn].includes(column)))) {
+    throw new Error("reopenColumns must list distinct configured columns other than capture and archive");
+  }
   if (!config.spaces.includes(config.defaultSpace)) throw new Error("defaultSpace must name a configured Space");
   validateWebDefaults(config.webDefaults, config.spaces);
   return config;
@@ -69,16 +79,25 @@ function parseTask(content, relativePath, config) {
   const errors = [];
   const heading = /^# (.+)\r?$/m.exec(content);
   const header = heading ? content.slice(0, heading.index) : content;
-  const markers = [...header.matchAll(/\[([a-z-]+):([^\]\r\n]*)\]/g)];
+  const recurKeys = ["repeat", "reopen", "opened", "closed"];
+  const markers = [...header.matchAll(/\[([a-z-]+(?:::[a-z-]+)?):([^\]\r\n]*)\]/g)]
+    .map(([marker, key, value]) => {
+      if (recurKeys.includes(key)) errors.push(`Use [recur::${key}:...] instead of [${key}:...]`);
+      if (key.startsWith("recur::")) {
+        if (!recurKeys.includes(key.slice(7))) errors.push(`Unsupported recurrence metadata: ${key}`);
+        key = key.slice(7);
+      }
+      return [marker, key, value];
+    });
   const fields = new Map();
   for (const [, key, value] of markers) {
     if (!fields.has(key)) fields.set(key, []);
     fields.get(key).push(value);
-    if (!["id", "tag", "created", "updated", "due", "legacy"].includes(key)) {
+    if (!["id", "tag", "created", "updated", "due", "legacy", "repeat", "opened", "closed", "reopen"].includes(key)) {
       errors.push(`Unsupported metadata: ${key}`);
     }
   }
-  if (header.replace(/\[([a-z-]+):([^\]\r\n]*)\]/g, "").trim()) {
+  if (header.replace(/\[([a-z-]+(?:::[a-z-]+)?):([^\]\r\n]*)\]/g, "").trim()) {
     errors.push("Unrecognized text in metadata header");
   }
   const single = (key, required = false) => {
@@ -101,7 +120,22 @@ function parseTask(content, relativePath, config) {
   }
   const due = single("due");
   if (fields.has("due") && !dateValid(due || "")) errors.push("Invalid due date");
+  const reopen = single("reopen");
+  if (fields.has("reopen") && !dateValid(reopen || "")) errors.push("Invalid reopening date");
+  const repeat = single("repeat");
+  if (fields.has("repeat")) {
+    try { recurrence.interval(repeat); } catch (error) { errors.push(error.message); }
+  }
+  const occurrences = markers.filter(([, key]) => ["opened", "closed"].includes(key))
+    .map(([, event, at]) => ({ event, at }));
+  for (const [index, occurrence] of occurrences.entries()) {
+    if (!timestampValid(occurrence.at)) errors.push(`Invalid ${occurrence.event} UTC timestamp`);
+    const previous = occurrences[index - 1];
+    if (previous?.event === occurrence.event) errors.push("Opening and closing events must alternate");
+    if (previous && previous.at > occurrence.at) errors.push("History timestamps must not go backwards");
+  }
   const tags = fields.get("tag") || [];
+  if (tags.includes("recurring")) errors.push("Remove the redundant recurring tag; use repeat or reopen");
   const scopes = new Map();
   for (const tag of tags) {
     if (!tag.trim() || tag.trim() !== tag) errors.push("Tag must be nonempty and trimmed");
@@ -122,6 +156,12 @@ function parseTask(content, relativePath, config) {
   const parts = relativePath.split(path.sep);
   const state = parts[0];
   if (parts.length !== 2 || !config?.columns.includes(state)) errors.push("Unknown workflow directory");
+  if ((repeat || reopen) && config) {
+    const archived = state === config.archiveColumn;
+    const last = occurrences.at(-1);
+    if (last && archived !== (last.event === "closed")) errors.push("History does not match the workflow column; record the missing move");
+    if (archived && repeat && !reopen && !last) errors.push("Archived repeating card needs a closing event or reopening date");
+  }
   if (!heading || !heading[1].trim()) errors.push("Missing task title (# Title)");
   if (/^(<{7}|={7}|>{7})(?: |$)/m.test(content)) errors.push("Unresolved Git conflict");
   return {
@@ -129,7 +169,7 @@ function parseTask(content, relativePath, config) {
     revision: createHash("sha256").update(content).digest("hex"),
     title: heading ? heading[1].trim() : path.basename(relativePath, ".md"),
     state, tags, space,
-    due, created, updated, path: relativePath.split(path.sep).join("/"),
+    due, created, updated, repeat, reopen, occurrences, path: relativePath.split(path.sep).join("/"),
     body: heading ? content.slice(heading.index + heading[0].length).replace(/^\r?\n/, "") : content,
     errors,
   };
@@ -200,6 +240,7 @@ function snapshot(root) {
       else if (ids.get(reference).length > 1) task.errors.push(`Ambiguous reference osl:${reference}`);
     }
     task.errors.forEach((message) => issues.push({ path: task.path, message }));
+    task.nextReopen = !task.errors.length && task.state === config?.archiveColumn ? recurrence.nextDate(task) : null;
   }
   let nextId = null;
   let allocatorValid = true;
@@ -225,22 +266,60 @@ function snapshot(root) {
   return { schemaVersion: 1, states: config?.columns || [], spaces: config?.spaces || [],
     defaultSpace: config?.defaultSpace || null,
     webDefaults: config?.webDefaults || null,
-    archiveState: config?.archiveColumn || null, nextId, allocationSafe, tasks, issues };
+    archiveState: config?.archiveColumn || null, captureState: config?.captureColumn || null,
+    reopenStates: config?.reopenColumns || [], nextId, allocationSafe, tasks, issues };
 }
 
-function planMove(root, reference, { state, before }) {
+async function refresh(root) {
+  let current = snapshot(root);
+  if (process.env.OSL_RECUR_SKIP === "true") return current;
+  let pending = pendingChecks.get(root);
+  if (!pending) {
+    if (current.issues.length || !current.tasks.some((task) => recurrence.isReady(task, current))) return current;
+    pending = (async () => {
+      if (!process.env.OSL_HELPER) throw new Error("Configure OSL_HELPER for automatic reopening");
+      await runFile(process.env.OSL_HELPER, ["recur"], { env: { ...process.env,
+        OSL_TASKS: root, OSL_APP: path.join(__dirname, ".."), OSL_NODE: process.execPath,
+        OSL_RECUR_SKIP: "true", GIT_TERMINAL_PROMPT: "0" } });
+    })();
+    pendingChecks.set(root, pending);
+  }
+  try { await pending; current = snapshot(root); }
+  catch (error) {
+    current = snapshot(root);
+    current.issues.push({ path: "recurring", message: error.stderr?.trim() || error.message });
+  } finally {
+    if (pendingChecks.get(root) === pending) pendingChecks.delete(root);
+  }
+  return current;
+}
+
+function planMove(root, reference, { state, before, ifDue = false, reopen }) {
   const current = snapshot(root);
   if (current.issues.length) throw new Error("Run validate and resolve task-store issues before moving cards");
   const match = /^(?:osl:)?([1-9][0-9]*)$/.exec(reference);
   const task = current.tasks.find((task) => task.id === match?.[1]);
   if (!task) throw new Error(`Unknown or invalid reference ${reference}`);
   if (!current.states.includes(state)) throw new Error("Unknown target column");
+  if (reopen !== undefined && !dateValid(reopen)) throw new Error("Expected a reopening date in YYYY-MM-DD format");
+  if (ifDue) {
+    if (reopen !== undefined) throw new Error("Cannot set a reopening date during automatic reopening");
+    if (!recurrence.isReady(task, current)) return { source: task.path, target: task.path, order: null };
+    if (state !== current.captureState) throw new Error("Scheduled tasks must reopen in the capture column");
+    before = current.tasks.find((item) => item.state === state)?.id ?? null;
+  }
   const destination = current.tasks.filter((item) => item.state === state && item.id !== task.id).map((item) => item.id);
   if (before !== undefined && before !== null && !destination.includes(before)) {
     throw new Error("The preceding position must name another card in the target column; refresh the board");
   }
   const order = Object.assign(Object.create(null), readOrder(root, readConfig(root)));
   const result = { source: task.path, target: `${state}/${path.basename(task.path)}`, order: null };
+  const content = recurrence.transition(root, task, state, readConfig(root), reopen);
+  if (content !== null) {
+    const errors = parseTask(content, result.target, readConfig(root)).errors;
+    if (errors.length) throw new Error(errors.join("; "));
+    result.content = content;
+  }
   if (task.state === state && before === undefined) return result;
   if (before === undefined && !fs.existsSync(path.join(root, ".order.json"))) return result;
   destination.splice(before == null ? destination.length : destination.indexOf(before), 0, task.id);
@@ -345,7 +424,7 @@ function capture(root, { title, space, tags = [], body = "", state }) {
   } finally { fs.rmdirSync(lock); }
 }
 
-function main(args) {
+async function main(args) {
   let root = process.env.TASKS_DIR;
   if (args[0] === "--root") { root = args[1]; args = args.slice(2); }
   if (!root) throw new Error("Specify --root TASKS_DIR");
@@ -363,17 +442,39 @@ function main(args) {
     if (result.issues.length) process.exitCode = 1;
     return;
   }
-  if (command === "lookup" && args.length === 1) return process.stdout.write(`${lookup(root, args[0])}\n`);
-  if (command === "snapshot" && !args.length) return process.stdout.write(`${JSON.stringify(snapshot(root))}\n`);
+  if (command === "lookup" && args.length === 1) {
+    const current = await refresh(root);
+    current.issues.forEach((issue) => process.stderr.write(`${issue.path}: ${issue.message}\n`));
+    return process.stdout.write(`${lookup(root, args[0])}\n`);
+  }
+  if (command === "snapshot" && !args.length) return process.stdout.write(`${JSON.stringify(await refresh(root))}\n`);
+  if (command === "refresh" && args.length <= 1) {
+    const current = await refresh(root);
+    current.issues.forEach((issue) => process.stderr.write(`${issue.path}: ${issue.message}\n`));
+    if (args.length) {
+      const task = current.tasks.find((task) => `osl:${task.id}` === args[0] || task.id === args[0]);
+      if (!task) throw new Error("Saved card is missing after automatic reopening");
+      process.stdout.write(`${JSON.stringify({ revision: task.revision, path: task.path, state: task.state })}\n`);
+    }
+    return;
+  }
+  if (command === "due" && !args.length) {
+    const current = snapshot(root);
+    if (current.issues.length) throw new Error("Run validate before reopening recurring tasks");
+    return process.stdout.write(current.tasks.filter((task) => recurrence.isReady(task, current))
+      .map((task) => task.id).join("\n"));
+  }
   if (command === "plan-move") {
     const reference = args.shift();
     const options = {};
     while (args.length) {
       const key = args.shift();
+      if (key === "--if-due" && !options.ifDue) { options.ifDue = true; continue; }
       if (key === "--last" && options.before === undefined) { options.before = null; continue; }
       const value = args.shift();
-      if (!value || !["--to", "--before"].includes(key)) throw new Error(`Invalid move option ${key}`);
+      if (!value || !["--to", "--before", "--reopen"].includes(key)) throw new Error(`Invalid move option ${key}`);
       if (key === "--to" && options.state === undefined) options.state = value;
+      else if (key === "--reopen" && options.reopen === undefined) options.reopen = value;
       else if (key === "--before" && options.before === undefined && /^(?:osl:)?[1-9][0-9]*$/.test(value)) options.before = value.replace(/^osl:/, "");
       else throw new Error(`Invalid or repeated move option ${key}`);
     }
@@ -388,13 +489,15 @@ function main(args) {
       if (key === "--tag") options.tags.push(value);
       else options[key.slice(2)] = value;
     }
-    return process.stdout.write(`${JSON.stringify(capture(root, options))}\n`);
+    const task = capture(root, options);
+    const current = await refresh(root);
+    current.issues.forEach((issue) => process.stderr.write(`${issue.path}: ${issue.message}\n`));
+    return process.stdout.write(`${JSON.stringify(task)}\n`);
   }
   throw new Error("Usage: osl.js --root DIR init|config|validate|snapshot|lookup NUMBER_OR_REFERENCE|capture --title TITLE [--space SPACE] [--tag TAG] [--state STATE] [--body TEXT]");
 }
 
-module.exports = { readConfig, readOrder, parseTask, snapshot, planMove, lookup, init, capture, edit };
+module.exports = { readConfig, readOrder, parseTask, snapshot, refresh, planMove, lookup, init, capture, edit };
 if (require.main === module) {
-  try { main(process.argv.slice(2)); }
-  catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; }
+  main(process.argv.slice(2)).catch((error) => { process.stderr.write(`${error.message}\n`); process.exitCode = 1; });
 }
