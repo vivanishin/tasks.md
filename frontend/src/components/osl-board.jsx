@@ -1,5 +1,5 @@
 import { createSignal, createMemo, createEffect, onMount, onCleanup, lazy, For, Show } from "solid-js";
-import { IconPencil, IconCopy, IconEllipsisVertical } from "@stackoverflow/stacks-icons/icons";
+import { IconPencil, IconCopy, IconHamburger } from "@stackoverflow/stacks-icons/icons";
 import { Portal } from "solid-js/web";
 import { Card } from "./card";
 import { oslEditorPlugin } from "../osl-editor.mjs";
@@ -577,7 +577,7 @@ export default function OslBoard() {
             event.currentTarget.querySelector("summary").focus();
           } }}>
           <summary class="dialog__toolbar-btn" title="Другие варианты копирования" aria-label="Другие варианты копирования">
-            <span aria-hidden="true" innerHTML={IconEllipsisVertical} />
+            <span aria-hidden="true" innerHTML={IconHamburger} />
           </summary>
           <div class="osl-copy-menu" onClick={() => { copyMenu.open = false; copyMenu.querySelector("summary").focus(); }}>
             <button type="button" onClick={() => copy(`osl:${task().id}`)}>Копировать osl:</button>
